@@ -6,12 +6,28 @@ from typing import List
 
 import numpy as np
 import torch
+from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
 from .config import DataConfig, VisionConfig, VQConfig
 from .data_sr100 import build_cache_paths
 from .vision import VisionEncoder
 from .vq import VQCodebook
+
+
+class FrameDataset(Dataset):
+    """Wrapper dataset for parallel frame loading."""
+    def __init__(self, lerobot_ds, image_key: str):
+        self.ds = lerobot_ds
+        self.image_key = image_key
+
+    def __len__(self):
+        return len(self.ds)
+
+    def __getitem__(self, idx):
+        step = self.ds[idx]
+        img = step[self.image_key]
+        return torch.as_tensor(img)
 
 
 def parse_args() -> argparse.Namespace:
@@ -62,33 +78,31 @@ def main():
     encoder = VisionEncoder(vision_cfg.model_name, device=device)
     encoder.eval()
 
-    # Collect embeddings for all timesteps in this split using batched processing.
+    # Wrap dataset for parallel loading
+    frame_ds = FrameDataset(ds, data_cfg.image_key)
+    loader = DataLoader(
+        frame_ds,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+        pin_memory=True,
+        prefetch_factor=4,
+        persistent_workers=True if args.num_workers > 0 else False,
+    )
+
+    # Collect embeddings using parallel data loading + batched GPU encoding
     all_embs: List[np.ndarray] = []
-    batch_size = args.batch_size
 
-    for batch_start in tqdm(range(0, len(ds), batch_size), desc="Encoding frames"):
-        batch_end = min(batch_start + batch_size, len(ds))
-        batch_imgs = []
+    print(f"Processing {len(ds)} frames with batch_size={args.batch_size}, num_workers={args.num_workers}")
 
-        # Collect batch of images
-        for i in range(batch_start, batch_end):
-            step = ds[i]
-            img = step[data_cfg.image_key]  # expected [C, H, W] tensor/array
-            img_t = torch.as_tensor(img)
-            if img_t.dim() == 3:
-                img_t = img_t.unsqueeze(0)  # [1, C, H, W]
-            batch_imgs.append(img_t)
+    with torch.no_grad():
+        for batch_imgs in tqdm(loader, desc="Encoding frames"):
+            # batch_imgs: [B, C, H, W]
+            batch_imgs = batch_imgs.to(device)
+            batch_embs = encoder.encode(batch_imgs).cpu().numpy().astype(np.float16)
+            all_embs.append(batch_embs)
 
-        # Batch encode on GPU
-        batch_tensor = torch.cat(batch_imgs, dim=0)  # [B, C, H, W]
-        with torch.no_grad():
-            batch_embs = encoder.encode(batch_tensor).cpu().numpy().astype(np.float16)
-
-        # Add to list
-        for emb in batch_embs:
-            all_embs.append(emb)
-
-    all_embs_np = np.stack(all_embs)  # [T, d_e]
+    all_embs_np = np.concatenate(all_embs, axis=0)  # [T, d_e]
     np.save(cache_paths.embeddings_path, all_embs_np)
 
     # Build VQ codebook using a random subset if needed.
