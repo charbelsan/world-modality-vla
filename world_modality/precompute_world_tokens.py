@@ -54,9 +54,9 @@ def main():
     else:
         device = vision_cfg.device
 
-    from lerobot.common.datasets.lerobot_dataset import LeRobotDataset  # type: ignore
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset  # type: ignore
 
-    ds = LeRobotDataset(data_cfg.dataset_name, split=args.split)
+    ds = LeRobotDataset(data_cfg.dataset_name)
     cache_paths = build_cache_paths(data_cfg, args.split)
 
     encoder = VisionEncoder(vision_cfg.model_name, device=device)
