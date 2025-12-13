@@ -111,6 +111,21 @@ If `P(w[t]==w[t+1])` and the bigram baseline are near random, your tokenization 
 - reduce `--vq_num_tokens` (e.g. 256),
 - and start with `--future_offset 1` during training (only next-step prediction).
 
+To visually sanity-check whether tokens are semantically coherent, generate token grids:
+
+```bash
+python -m world_modality.inspect_token_images \
+  --dataset_name HuggingFaceVLA/libero \
+  --cache_dir cache \
+  --split train \
+  --image_key observation.images.image \
+  --out_dir token_inspection \
+  --num_tokens 10 \
+  --samples_per_token 12
+```
+
+Open the saved `token_inspection/token_*.jpg` files and verify that frames within a token look related.
+
 ---
 
 ## 2) Crash-proofing: do not lose checkpoints
