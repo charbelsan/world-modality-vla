@@ -61,6 +61,7 @@ python -m world_modality.precompute_world_tokens \
   --image_key observation.images.image \
   --vision_model_name facebook/dinov2-base \
   --vq_num_tokens 1024 \
+  --l2_normalize \
   --cache_dir cache
 ```
 
@@ -92,6 +93,24 @@ python -m world_modality.intervention_corrupt_world --checkpoint logs_c/model_C_
 `eval_offline` prints action MSE and world-token Top‑1/Top‑5 accuracy (per horizon).
 `intervention_corrupt_world` prints clean vs corrupted MSE and a ratio (corrupt/clean).
 
+### 1.5 If world accuracy is ~0: analyze token predictability
+
+Run:
+
+```bash
+python -m world_modality.analyze_world_tokens \
+  --dataset_name HuggingFaceVLA/libero \
+  --cache_dir cache \
+  --split train \
+  --max_k 8
+```
+
+If `P(w[t]==w[t+1])` and the bigram baseline are near random, your tokenization is too noisy:
+
+- try `--l2_normalize` (enabled above),
+- reduce `--vq_num_tokens` (e.g. 256),
+- and start with `--future_offset 1` during training (only next-step prediction).
+
 ---
 
 ## 2) Crash-proofing: do not lose checkpoints
@@ -122,4 +141,3 @@ python -m coc_vla.coc_generation \
 ```
 
 Use `--resume` and sync the JSONL if the machine is unstable.
-

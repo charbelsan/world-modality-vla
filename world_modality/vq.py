@@ -28,6 +28,7 @@ class VQCodebook:
         num_tokens: int = 1024,
         batch_size: int = 4096,
         use_faiss: bool = True,
+        random_state: int = 0,
     ) -> "VQCodebook":
         """
         Build a VQ codebook via MiniBatchKMeans over a set of embeddings.
@@ -42,6 +43,7 @@ class VQCodebook:
             batch_size=batch_size,
             compute_labels=False,
             verbose=1,
+            random_state=random_state,
         )
         kmeans.fit(embeddings)
         centroids = kmeans.cluster_centers_.astype(np.float32)
@@ -71,4 +73,3 @@ class VQCodebook:
         diff = x[:, None, :] - self.centroids[None, :, :]
         dist = (diff**2).sum(axis=-1)  # [B, N]
         return dist.argmin(axis=1).astype(np.int64)
-

@@ -44,8 +44,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--vq_num_tokens", type=int, default=1024)
     parser.add_argument("--vq_sample_frames", type=int, default=200_000)
     parser.add_argument("--vq_batch_size", type=int, default=4096)
+    parser.add_argument("--vq_random_state", type=int, default=0, help="Random seed for k-means init.")
     parser.add_argument("--vision_model_name", type=str, default="facebook/dinov2-base")
     parser.add_argument("--device", type=str, default="cuda")
+    parser.add_argument("--l2_normalize", action="store_true", help="L2-normalize embeddings before k-means + assignment.")
     return parser.parse_args()
 
 
@@ -106,6 +108,10 @@ def main():
     all_embs_np = np.concatenate(all_embs, axis=0)  # [T, d_e]
     np.save(cache_paths.embeddings_path, all_embs_np)
 
+    if args.l2_normalize:
+        norms = np.linalg.norm(all_embs_np.astype(np.float32), axis=1, keepdims=True) + 1e-8
+        all_embs_np = (all_embs_np.astype(np.float32) / norms).astype(np.float16)
+
     # Build VQ codebook using a random subset if needed.
     num_frames = all_embs_np.shape[0]
     if num_frames > vq_cfg.sample_frames:
@@ -115,7 +121,10 @@ def main():
         sample_embs = all_embs_np.astype(np.float32)
 
     codebook = VQCodebook.from_embeddings(
-        sample_embs, num_tokens=vq_cfg.num_tokens, batch_size=vq_cfg.kmeans_batch_size
+        sample_embs,
+        num_tokens=vq_cfg.num_tokens,
+        batch_size=vq_cfg.kmeans_batch_size,
+        random_state=args.vq_random_state,
     )
 
     # Quantize all embeddings
