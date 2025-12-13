@@ -62,17 +62,31 @@ def main():
     encoder = VisionEncoder(vision_cfg.model_name, device=device)
     encoder.eval()
 
-    # Collect embeddings for all timesteps in this split.
+    # Collect embeddings for all timesteps in this split using batched processing.
     all_embs: List[np.ndarray] = []
-    for i in tqdm(range(len(ds)), desc="Encoding frames"):
-        step = ds[i]
-        img = step[data_cfg.image_key]  # expected [C, H, W] tensor/array
-        img_t = torch.as_tensor(img)
-        if img_t.dim() == 3:
-            img_t = img_t.unsqueeze(0)  # [1, C, H, W]
+    batch_size = args.batch_size
+
+    for batch_start in tqdm(range(0, len(ds), batch_size), desc="Encoding frames"):
+        batch_end = min(batch_start + batch_size, len(ds))
+        batch_imgs = []
+
+        # Collect batch of images
+        for i in range(batch_start, batch_end):
+            step = ds[i]
+            img = step[data_cfg.image_key]  # expected [C, H, W] tensor/array
+            img_t = torch.as_tensor(img)
+            if img_t.dim() == 3:
+                img_t = img_t.unsqueeze(0)  # [1, C, H, W]
+            batch_imgs.append(img_t)
+
+        # Batch encode on GPU
+        batch_tensor = torch.cat(batch_imgs, dim=0)  # [B, C, H, W]
         with torch.no_grad():
-            emb = encoder.encode(img_t)[0].cpu().numpy().astype(np.float16)
-        all_embs.append(emb)
+            batch_embs = encoder.encode(batch_tensor).cpu().numpy().astype(np.float16)
+
+        # Add to list
+        for emb in batch_embs:
+            all_embs.append(emb)
 
     all_embs_np = np.stack(all_embs)  # [T, d_e]
     np.save(cache_paths.embeddings_path, all_embs_np)
