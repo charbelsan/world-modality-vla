@@ -1,0 +1,130 @@
+from __future__ import annotations
+
+import argparse
+from typing import List
+
+import numpy as np
+import torch
+from torch.utils.data import DataLoader
+
+from .config import DataConfig, TransformerConfig
+from .data_sr100 import SR100SequenceDataset
+from .model import WorldPolicyTransformer
+from .train_utils import compute_action_loss
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Intervention test: corrupt WORLD_CUR tokens at inference."
+    )
+    parser.add_argument("--checkpoint", type=str, required=True)
+    parser.add_argument("--dataset_name", type=str, required=True)
+    parser.add_argument("--split", type=str, default="val")
+    parser.add_argument("--image_key", type=str, default="rgb")
+    parser.add_argument("--proprio_key", type=str, default="proprio")
+    parser.add_argument("--action_key", type=str, default="action")
+    parser.add_argument("--cache_dir", type=str, default="cache")
+    parser.add_argument("--batch_size", type=int, default=256)
+    parser.add_argument("--num_workers", type=int, default=8)
+    parser.add_argument("--device", type=str, default="cuda")
+    return parser.parse_args()
+
+
+def main():
+    args = parse_args()
+    device = torch.device(args.device if torch.cuda.is_available() else "cpu")
+
+    ckpt = torch.load(args.checkpoint, map_location=device)
+    cfg = ckpt["config"]
+    meta = ckpt.get("meta", {})
+
+    model_type = meta.get("model_type", cfg.get("model_type", "A"))
+    if model_type != "C":
+        raise ValueError("Intervention test is only meaningful for model type C (world modality).")
+
+    data_cfg = DataConfig(
+        dataset_name=args.dataset_name,
+        image_key=args.image_key,
+        proprio_key=args.proprio_key,
+        action_key=args.action_key,
+        cache_dir=args.cache_dir,
+        train_split=cfg.get("train_split", "train"),
+        val_split=args.split,
+        batch_size=args.batch_size,
+        num_workers=args.num_workers,
+    )
+
+    ds = SR100SequenceDataset(data_cfg, split=args.split)
+    loader = DataLoader(
+        ds,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+        pin_memory=True,
+    )
+
+    transformer_cfg = TransformerConfig()
+    img_emb_dim = int(meta.get("img_emb_dim", 768))
+    state_dim = int(meta.get("state_dim", ds[0]["obs_states"].shape[-1]))
+    action_dim = int(meta.get("action_dim", ds[0]["actions"].shape[-1]))
+    horizon = int(meta.get("action_horizon", data_cfg.action_horizon))
+    future_horizon = int(meta.get("future_offset", data_cfg.future_offset))
+    world_vocab_size = int(meta.get("world_vocab_size", 1024))
+
+    model = WorldPolicyTransformer(
+        model_type="C",  # type: ignore
+        cfg=transformer_cfg,
+        obs_dim=img_emb_dim,
+        state_dim=state_dim,
+        action_dim=action_dim,
+        world_vocab_size=world_vocab_size,
+        horizon=horizon,
+        future_horizon=future_horizon,
+    ).to(device)
+    model.load_state_dict(ckpt["model_state_dict"])
+    model.eval()
+
+    mse_clean: List[float] = []
+    mse_corrupt: List[float] = []
+
+    rng = np.random.default_rng(seed=0)
+
+    with torch.no_grad():
+        for batch in loader:
+            actions_gt = batch["actions"].to(device)
+            states = batch["obs_states"][:, -1].to(device)
+            img_ctx = batch["img_embeddings"][:, -1].to(device)
+            current_tokens = batch["current_world_token"].to(device)
+
+            # Clean run: use true WORLD_CUR.
+            pred_actions_clean, _ = model(
+                img_emb=img_ctx, state=states, current_world_token=current_tokens
+            )
+            mse_c = compute_action_loss(pred_actions_clean, actions_gt).item()
+            mse_clean.append(mse_c)
+
+            # Corrupted run: replace WORLD_CUR with random tokens.
+            bsz = current_tokens.shape[0]
+            random_tokens = rng.integers(
+                low=0, high=world_vocab_size, size=(bsz,), endpoint=False
+            )
+            random_tokens_t = torch.as_tensor(random_tokens, dtype=torch.long, device=device)
+            pred_actions_corrupt, _ = model(
+                img_emb=img_ctx, state=states, current_world_token=random_tokens_t
+            )
+            mse_r = compute_action_loss(pred_actions_corrupt, actions_gt).item()
+            mse_corrupt.append(mse_r)
+
+    mean_clean = float(np.mean(mse_clean)) if mse_clean else 0.0
+    mean_corrupt = float(np.mean(mse_corrupt)) if mse_corrupt else 0.0
+
+    print(f"Intervention eval on split={args.split}:")
+    print(f"  Clean WORLD_CUR   action MSE = {mean_clean:.6f}")
+    print(f"  Corrupted WORLD_CUR action MSE = {mean_corrupt:.6f}")
+    if mean_clean > 0:
+        print(f"  MSE ratio (corrupt / clean) = {mean_corrupt / mean_clean:.3f}")
+
+
+if __name__ == "__main__":
+    main()
+
