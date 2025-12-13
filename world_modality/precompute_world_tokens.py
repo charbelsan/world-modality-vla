@@ -80,15 +80,16 @@ def main():
 
     # Wrap dataset for parallel loading
     frame_ds = FrameDataset(ds, data_cfg.image_key)
-    loader = DataLoader(
-        frame_ds,
-        batch_size=args.batch_size,
-        shuffle=False,
-        num_workers=args.num_workers,
-        pin_memory=True,
-        prefetch_factor=4,
-        persistent_workers=True if args.num_workers > 0 else False,
-    )
+    loader_kwargs = {
+        "batch_size": args.batch_size,
+        "shuffle": False,
+        "num_workers": args.num_workers,
+        "pin_memory": True if args.num_workers > 0 else False,
+    }
+    if args.num_workers > 0:
+        loader_kwargs["prefetch_factor"] = 4
+        loader_kwargs["persistent_workers"] = True
+    loader = DataLoader(frame_ds, **loader_kwargs)
 
     # Collect embeddings using parallel data loading + batched GPU encoding
     all_embs: List[np.ndarray] = []
