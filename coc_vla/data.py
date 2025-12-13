@@ -67,9 +67,23 @@ class CoCSR100Dataset(Dataset):
 
     def _infer_episode_ids(self) -> List[int]:
         # SR100SequenceDataset.episode_indices is a list of lists of global indices.
-        # We assume episodes are ordered by episode_id; map indices 0..N-1 accordingly.
-        num_eps = len(self.base.episode_indices)
-        return list(range(num_eps))
+        # Recover the underlying episode_id values (so they match coc_generation.py output).
+        if not self.base.episode_indices:
+            return []
+
+        # If the underlying dataset doesn't expose episode_id, we treat it as a single episode 0.
+        sample0 = self.base.dataset[0]
+        if "episode_id" not in sample0:
+            return [0]
+
+        episode_ids: List[int] = []
+        for ep_indices in self.base.episode_indices:
+            if not ep_indices:
+                continue
+            gidx0 = ep_indices[0]
+            step0 = self.base.dataset[gidx0]
+            episode_ids.append(int(step0["episode_id"]))
+        return episode_ids
 
     def __len__(self) -> int:
         return len(self.base.indices)
@@ -81,4 +95,3 @@ class CoCSR100Dataset(Dataset):
         coc_text = self.episode_to_coc.get(ep_id, "")
         sample["coc_text"] = coc_text
         return sample
-

@@ -8,11 +8,10 @@ from typing import Dict, Tuple
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.data import DataLoader
-
-from torch.nn.utils.rnn import pad_sequence
 
 from world_modality.config import DataConfig, TransformerConfig
 from world_modality.train_utils import (
@@ -20,7 +19,6 @@ from world_modality.train_utils import (
     compute_world_loss,
     set_seed,
 )
-from coc_vla.config import CoCDataConfig, CoCModelConfig, CoCTrainingConfig, CoCExperimentConfig
 from coc_vla.data import CoCSR100Dataset
 from coc_vla.model import WorldCoCTransformer
 
@@ -48,7 +46,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--log_dir", type=str, default="logs_coc")
     parser.add_argument("--num_workers", type=int, default=8)
-    parser.add_argument("--coc_vocab_size", type=int, default=32000, help="Tokenizer vocab size placeholder.")
+    parser.add_argument("--coc_tokenizer_name", type=str, default="Qwen/Qwen2.5-0.5B", help="HF tokenizer name for CoC.")
+    parser.add_argument("--coc_max_len", type=int, default=128, help="Max CoC tokens (after tokenization).")
     return parser.parse_args()
 
 
@@ -83,6 +82,8 @@ def save_config(args: argparse.Namespace, log_dir: str):
         "device": args.device,
         "seed": args.seed,
         "num_workers": args.num_workers,
+        "coc_tokenizer_name": args.coc_tokenizer_name,
+        "coc_max_len": args.coc_max_len,
         "timestamp": datetime.now().isoformat(),
     }
     os.makedirs(log_dir, exist_ok=True)
@@ -90,22 +91,50 @@ def save_config(args: argparse.Namespace, log_dir: str):
         json.dump(cfg, f, indent=2)
 
 
-def collate_with_coc(batch: Dict) -> Dict[str, torch.Tensor]:
+def make_collate_with_coc(tokenizer, max_len: int):
     """
-    Collate function that pads CoC token sequences.
-    For now we treat coc_text as raw strings and leave tokenization to the caller;
-    this is a sketch. You can plug in a real tokenizer later.
+    Create a collate_fn that tokenizes and pads CoC text.
+
+    We train the CoC decoder as a causal LM with teacher forcing:
+      - decoder_input_ids = tokens[:-1]
+      - labels = tokens[1:]
     """
-    # Placeholder: no real tokenization here, just return strings in a list.
-    # In a real implementation, you'd map each string to token ids here.
-    collated = {}
-    keys = batch[0].keys()
-    for k in keys:
-        if k in ("coc_text",):
-            collated[k] = [b[k] for b in batch]
-        else:
+
+    pad_id = tokenizer.pad_token_id
+
+    def collate(batch: Dict) -> Dict[str, torch.Tensor]:
+        collated: Dict[str, torch.Tensor] = {}
+        keys = batch[0].keys()
+        for k in keys:
+            if k == "coc_text":
+                continue
             collated[k] = torch.stack([b[k] for b in batch], dim=0)
-    return collated
+
+        coc_texts = [b.get("coc_text", "") for b in batch]
+        enc = tokenizer(
+            coc_texts,
+            padding=True,
+            truncation=True,
+            max_length=max_len + 1,  # +1 because we shift for LM
+            return_tensors="pt",
+            add_special_tokens=True,
+        )
+        input_ids = enc["input_ids"]  # [B, L]
+        attn = enc.get("attention_mask", torch.ones_like(input_ids))
+
+        if input_ids.shape[1] < 2:
+            # Ensure we can shift.
+            input_ids = torch.cat([input_ids, torch.full_like(input_ids, pad_id)], dim=1)
+            attn = torch.cat([attn, torch.zeros_like(attn)], dim=1)
+
+        collated["coc_input_ids"] = input_ids[:, :-1].contiguous()
+        labels = input_ids[:, 1:].contiguous()
+        label_attn = attn[:, 1:].contiguous()
+        labels = labels.masked_fill(label_attn == 0, -100)
+        collated["coc_labels"] = labels
+        return collated
+
+    return collate
 
 
 def main():
@@ -113,6 +142,13 @@ def main():
 
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
     set_seed(args.seed)
+
+    from transformers import AutoTokenizer
+
+    tokenizer = AutoTokenizer.from_pretrained(args.coc_tokenizer_name, use_fast=True)
+    if tokenizer.pad_token_id is None:
+        # Many LLM tokenizers have no pad token; using eos as pad is standard.
+        tokenizer.pad_token = tokenizer.eos_token
 
     # Build configs.
     data_cfg_world = DataConfig(
@@ -135,7 +171,7 @@ def main():
         shuffle=True,
         num_workers=args.num_workers,
         pin_memory=True,
-        collate_fn=collate_with_coc,
+        collate_fn=make_collate_with_coc(tokenizer, max_len=args.coc_max_len),
     )
 
     # Infer dimensions from one batch.
@@ -159,12 +195,12 @@ def main():
         world_vocab_size=args.world_vocab_size,
         horizon=args.action_horizon,
         future_horizon=args.future_offset,
-        coc_vocab_size=args.coc_vocab_size,
+        coc_vocab_size=int(getattr(tokenizer, "vocab_size", len(tokenizer))),
         coc_d_model=trunk_cfg.d_model,
         coc_n_layers=4,
         coc_n_heads=trunk_cfg.n_heads,
         coc_dropout=trunk_cfg.dropout,
-        coc_max_len=128,
+        coc_max_len=args.coc_max_len,
     ).to(device)
 
     optimizer = AdamW(model.parameters(), lr=args.learning_rate, weight_decay=1e-4)
@@ -187,9 +223,8 @@ def main():
             future_tokens = batch["future_world_tokens"].to(device)
             current_tokens = batch["current_world_token"].to(device)
 
-            # Placeholder: CoC tokenization (here we simply skip CoC loss).
-            coc_texts = batch["coc_text"]  # list of strings
-            coc_input_ids = None  # TODO: map coc_texts to token ids for real training.
+            coc_input_ids = batch["coc_input_ids"].to(device)
+            coc_labels = batch["coc_labels"].to(device)
 
             optimizer.zero_grad()
 
@@ -203,8 +238,16 @@ def main():
             act_loss = compute_action_loss(actions_pred, actions_gt)
             world_loss = compute_world_loss(world_logits, future_tokens)
 
-            # For now, skip CoC loss until a tokenizer is wired.
             coc_loss = torch.tensor(0.0, device=device)
+            if coc_logits is not None:
+                # coc_logits: [B, L, V], coc_labels: [B, L]
+                num_valid = int((coc_labels != -100).sum().item())
+                if num_valid > 0:
+                    coc_loss = F.cross_entropy(
+                        coc_logits.reshape(-1, coc_logits.shape[-1]),
+                        coc_labels.reshape(-1),
+                        ignore_index=-100,
+                    )
 
             loss = act_loss + args.lambda_world_loss * world_loss + args.alpha_coc_loss * coc_loss
 
@@ -252,4 +295,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

@@ -34,10 +34,12 @@ The code is designed to work with any `LeRobotDataset`, but a strong first choic
 You can inspect a sample locally to confirm:
 
 ```python
-from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
-ds = LeRobotDataset("HuggingFaceVLA/libero", split="train")
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
+ds = LeRobotDataset("HuggingFaceVLA/libero")
 print(ds[0].keys())
 ```
+
+Note: LeRobot versions differ on whether `LeRobotDataset` supports `split=...`. This repo assumes the modern API (`LeRobotDataset(name)`), and performs train/val splitting by **episode_id** inside `world_modality/data_sr100.py`.
 
 ## 3. Precompute world tokens (embeddings + VQ)
 
@@ -117,9 +119,29 @@ python train_model_c.py \
 During training the script logs:
 
 - training/validation action MSE
-- world-token prediction loss and accuracy (for B/C)
+- world-token prediction loss and accuracy (for B/C/C_no_world_input)
 
 Checkpoints are written to `logs/` as `model_<A|B|C>_epoch*.pt` and include minimal metadata for inference.
+
+### 4.1 Extra ablation: C_no_world_input
+
+This isolates “world modality helps” from “aux future loss helps”:
+
+```bash
+python train_model_c.py \
+  --model_type C_no_world_input \
+  --dataset_name HuggingFaceVLA/libero \
+  --image_key observation.images.image \
+  --proprio_key observation.state \
+  --action_key action \
+  --cache_dir cache \
+  --batch_size 256 \
+  --context_frames 3 \
+  --action_horizon 8 \
+  --future_offset 8 \
+  --world_vocab_size 1024 \
+  --lambda_world_loss 0.2
+```
 
 ## 5. Offline evaluation
 
@@ -143,7 +165,7 @@ python -m world_modality.eval_offline \
 This reports:
 
 - action MSE on the chosen split,
-- world-token accuracy per prediction horizon k (for models B/C).
+- world-token Top‑1 and Top‑5 accuracy per prediction horizon k (for models B/C/C_no_world_input).
 
 ## 6. Real robot inference on SR100
 
@@ -192,7 +214,13 @@ python -m world_modality.intervention_corrupt_world \
 
 This reports action MSE in the clean vs corrupted setting and their ratio.
 
-## 8. Hackathon report and assets
+## 8. Crash-proofing (VM restarts)
+
+Do not rely on local disk for checkpoints/logs if the VM is unstable.
+
+See `ops/README.md` for Google Drive sync via `rclone`.
+
+## 9. Hackathon report and assets
 
 - Fill `REPORT.md` with:
   - dataset details and hyperparameters

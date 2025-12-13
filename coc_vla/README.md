@@ -179,6 +179,55 @@ The file `coc_vla/coc_generation.py` contains:
 
 Training scripts in this folder expect such a JSONL file per dataset split (`train`, `val`, etc.).
 
+### 4.1 Quick smoke test (NVIDIA box)
+
+This verifies that the VLM can *actually* see the images and produce multi-step CoC text before you run large-scale labeling.
+
+```bash
+pip install -r requirements.txt
+# Qwen3-VL support requires a recent transformers; upgrade if needed.
+pip install -U "transformers>=4.56" accelerate
+
+mkdir -p coc_outputs
+python -m coc_vla.coc_generation \
+  --dataset_name HuggingFaceVLA/libero \
+  --image_key observation.images.image \
+  --instruction_key instruction \
+  --output_jsonl coc_outputs/libero_train_coc.jsonl \
+  --backend qwen3-vl \
+  --model_name Qwen/Qwen3-VL-8B-Instruct \
+  --max_episodes 5 \
+  --device cuda
+```
+
+Then open `coc_outputs/libero_train_coc.jsonl` and check that:
+
+- `error` is `null`
+- `coc_text` contains 4–7 numbered steps with “what” + “why”
+
+### 4.2 Crash-proofing output (VM restarts)
+
+If your VM can restart, do **not** write outputs only to local disk.
+
+Two simple options:
+
+1) Write `--output_jsonl` to a persistent mount (best).
+
+2) Sync the JSONL to Google Drive continuously (see `ops/README.md`):
+
+```bash
+bash ops/sync_rclone_file.sh \
+  coc_outputs/libero_train_coc.jsonl \
+  gdrive:world-modality-vla/coc_outputs/libero_train_coc.jsonl \
+  60
+```
+
+And run generation with `--resume` so you can continue after crashes:
+
+```bash
+python -m coc_vla.coc_generation ... --resume
+```
+
 ---
 
 ## 5. Two-head model implementation
@@ -256,4 +305,3 @@ Once the basic two-head CoC VLA is running, natural extensions include:
   - fine-tune on a small set of G1/Franka demos using the same world token vocabulary and CoC head.
 
 This folder provides the scaffolding to develop those ideas without entangling the core world-modality experiments.
-

@@ -172,3 +172,65 @@ Cons:
 
 These changes preserve the research bet while pulling in the strongest principles from the ecosystem.
 
+---
+
+## 6. Anthropic “Introspection” / Steering Vectors (how it fits here)
+
+Reference: Anthropic “Introspection” (steering via learned internal directions).
+
+### 6.1 First-principles takeaway
+
+Even when a model *can* represent a concept (e.g., “the world is now in a grasped state”), it may not:
+
+- expose it in a controllable way,
+- use it consistently for decision making,
+- or let you *intervene* on it causally.
+
+Steering-vector methods give you a way to:
+
+- **measure** whether the world-token stream is actually used internally (beyond our corruption test),
+- **separate** “world belief” from “action selection” in hidden states,
+- and optionally **nudge** the policy along a direction corresponding to a world-state concept.
+
+### 6.2 How to borrow without drifting from “world as modality”
+
+We keep world tokens as the explicit modality. Steering is used for *analysis and controlled ablations*, not as a replacement.
+
+Concrete uses:
+
+1) **Concept directions over the world stream**
+   - Collect transformer hidden states at the `WORLD_CUR` position (and/or FUT_QUERY positions).
+   - Train a linear probe to predict:
+     - world token id buckets,
+     - success / failure labels,
+     - “object in gripper” vs not (if you can derive this).
+   - The probe weight vector is an interpretable direction you can:
+     - track over time (does it strengthen as grasp completes?),
+     - compare across models A/B/C,
+     - and correlate with success / stability.
+
+2) **Causal intervention beyond token corruption**
+   - In addition to replacing `w_t` with random ids, add a small steering vector `+αv`
+     to the hidden state at `WORLD_CUR` (or FUT_QUERY) at inference.
+   - Measure:
+     - action MSE change offline,
+     - success rate change in sim/robot.
+   - This can reveal whether the model has a *linearly accessible* “world belief” subspace
+     and whether action selection is sensitive to it.
+
+3) **CoC consistency checks**
+   - For the two-head CoC model, probe whether “explanation correctness” aligns with:
+     - world rollout accuracy,
+     - and the presence of a “success” direction in hidden states.
+   - This connects “talking” to “world modeling” in a measurable way.
+
+### 6.3 Implementation note (future work)
+
+This is intentionally **phase-2** work:
+
+- First get strong A/B/C + corruption results.
+- Then add a small introspection script that:
+  - dumps hidden states on a held-out set,
+  - fits simple probes,
+  - and optionally runs a steering intervention.
+

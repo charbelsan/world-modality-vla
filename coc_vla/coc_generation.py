@@ -40,6 +40,7 @@ def parse_args() -> argparse.Namespace:
         help="Which transformers backend to use.",
     )
     parser.add_argument("--device", type=str, default="cuda")
+    parser.add_argument("--seed", type=int, default=0, help="Random seed (used for sampling-based generation).")
     parser.add_argument("--max_episodes", type=int, default=0, help="0 means no limit.")
     parser.add_argument("--prompt_file", type=str, default="", help="Optional prompt template file.")
 
@@ -167,6 +168,11 @@ def load_vlm(model_name: str, backend: str, device: str) -> VlmClient:
     from transformers import AutoProcessor
 
     torch_device = torch.device(device if torch.cuda.is_available() else "cpu")
+    # Prefer bf16 when supported; otherwise fallback to fp16 for CUDA.
+    if torch_device.type == "cuda":
+        torch_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+    else:
+        torch_dtype = torch.float32
     processor = AutoProcessor.from_pretrained(model_name)
 
     model = None
@@ -178,7 +184,7 @@ def load_vlm(model_name: str, backend: str, device: str) -> VlmClient:
                 "Qwen3VLForConditionalGeneration not available. "
                 "Upgrade transformers (>=4.56) or use --backend qwen2.5-vl/auto."
             ) from e
-        model = Qwen3VLForConditionalGeneration.from_pretrained(model_name, torch_dtype=torch.bfloat16)
+        model = Qwen3VLForConditionalGeneration.from_pretrained(model_name, torch_dtype=torch_dtype)
     elif backend == "qwen2.5-vl":
         try:
             from transformers import Qwen2_5_VLForConditionalGeneration  # type: ignore
@@ -187,11 +193,11 @@ def load_vlm(model_name: str, backend: str, device: str) -> VlmClient:
                 "Qwen2_5_VLForConditionalGeneration not available. "
                 "Upgrade transformers or use --backend auto."
             ) from e
-        model = Qwen2_5_VLForConditionalGeneration.from_pretrained(model_name, torch_dtype=torch.bfloat16)
+        model = Qwen2_5_VLForConditionalGeneration.from_pretrained(model_name, torch_dtype=torch_dtype)
     else:
         from transformers import AutoModelForVision2Seq
 
-        model = AutoModelForVision2Seq.from_pretrained(model_name, torch_dtype=torch.bfloat16)
+        model = AutoModelForVision2Seq.from_pretrained(model_name, torch_dtype=torch_dtype)
 
     model = model.to(torch_device)
     model.eval()
@@ -214,6 +220,11 @@ def build_messages(instruction: str, frames: List[Image.Image], prompt: str) -> 
 def main():
     args = parse_args()
     os.makedirs(os.path.dirname(args.output_jsonl) or ".", exist_ok=True)
+
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(args.seed)
 
     prompt = read_prompt(args.prompt_file)
     client = load_vlm(args.model_name, args.backend, args.device)
@@ -281,4 +292,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
