@@ -43,6 +43,7 @@ class TransformerConfig:
     n_layers: int = 6
     n_heads: int = 8
     dropout: float = 0.1
+    norm_first: bool = True  # Pre-norm tends to be more stable than post-norm.
 
 
 @dataclass

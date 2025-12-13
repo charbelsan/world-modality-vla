@@ -12,13 +12,25 @@ from .config import ModelType, TransformerConfig
 class TransformerBackbone(nn.Module):
     def __init__(self, cfg: TransformerConfig, seq_len: int):
         super().__init__()
-        encoder_layer = nn.TransformerEncoderLayer(
-            d_model=cfg.d_model,
-            nhead=cfg.n_heads,
-            dim_feedforward=4 * cfg.d_model,
-            dropout=cfg.dropout,
-            batch_first=True,
-        )
+        # Pre-norm (norm_first=True) is typically more stable for transformer training.
+        # Some older torch versions may not support `norm_first`, so we fall back.
+        try:
+            encoder_layer = nn.TransformerEncoderLayer(
+                d_model=cfg.d_model,
+                nhead=cfg.n_heads,
+                dim_feedforward=4 * cfg.d_model,
+                dropout=cfg.dropout,
+                batch_first=True,
+                norm_first=getattr(cfg, "norm_first", False),
+            )
+        except TypeError:  # pragma: no cover
+            encoder_layer = nn.TransformerEncoderLayer(
+                d_model=cfg.d_model,
+                nhead=cfg.n_heads,
+                dim_feedforward=4 * cfg.d_model,
+                dropout=cfg.dropout,
+                batch_first=True,
+            )
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=cfg.n_layers)
         self.pos_emb = nn.Parameter(torch.zeros(1, seq_len, cfg.d_model))
 
