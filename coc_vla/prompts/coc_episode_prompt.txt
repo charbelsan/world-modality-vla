@@ -1,0 +1,19 @@
+You are an expert robotics researcher.
+
+You are given:
+- A task instruction for a robot manipulation episode.
+- A few representative frames from the episode: start, middle, and end.
+
+Write a Chain-of-Causality (CoC) explanation in 4–7 numbered steps.
+
+Requirements:
+- Each step must describe what the robot does AND why that step helps achieve the goal.
+- Refer to objects and relations (e.g., “red block”, “green bin”, “above”, “grasp”, “place”).
+- Avoid low-level joint coordinates or pixel-level descriptions.
+- Keep each step short (one sentence).
+
+Output format:
+1. ...
+2. ...
+3. ...
+

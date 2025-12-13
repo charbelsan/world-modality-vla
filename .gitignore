@@ -1,0 +1,22 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+.env
+
+# Local experiment artifacts
+cache/
+logs*/
+wandb/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# External cloned repos (for research inspection)
+coc_vla/external/repos/
+

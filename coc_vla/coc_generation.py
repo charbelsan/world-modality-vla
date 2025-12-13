@@ -3,144 +3,280 @@ from __future__ import annotations
 import argparse
 import json
 import os
-from typing import List
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple
 
+import numpy as np
 import torch
 from PIL import Image
 from tqdm import tqdm
 
-from lerobot.common.datasets.lerobot_dataset import LeRobotDataset  # type: ignore
+
+try:
+    # Newer LeRobot
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset  # type: ignore
+except Exception:  # pragma: no cover
+    # Older LeRobot
+    from lerobot.common.datasets.lerobot_dataset import LeRobotDataset  # type: ignore
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Generate Chain-of-Causality (CoC) text for episodes.")
+    parser = argparse.ArgumentParser(description="Generate episode-level Chain-of-Causality (CoC) labels.")
     parser.add_argument("--dataset_name", type=str, required=True, help="LeRobot dataset name (e.g. HuggingFaceVLA/libero).")
-    parser.add_argument("--split", type=str, default="train")
     parser.add_argument("--image_key", type=str, default="rgb")
     parser.add_argument("--instruction_key", type=str, default="instruction", help="Key for instruction text, if available.")
-    parser.add_argument("--output_jsonl", type=str, required=True, help="Where to write episode-level CoC JSONL.")
-    parser.add_argument("--model_name", type=str, default="Qwen/Qwen2-VL-7B-Instruct", help="Open-source VLM model name.")
+    parser.add_argument("--episode_id_key", type=str, default="episode_id", help="Key used to group timesteps into episodes.")
+    parser.add_argument("--split", type=str, default="train", choices=["train", "val", "all"])
+    parser.add_argument("--train_val_split", type=float, default=0.9, help="Episode split ratio for train/val when split!=all.")
+    parser.add_argument("--output_jsonl", type=str, required=True, help="Output JSONL path.")
+    parser.add_argument("--resume", action="store_true", help="Append and skip already-labeled episode_ids.")
+
+    parser.add_argument("--model_name", type=str, default="Qwen/Qwen3-VL-8B-Instruct", help="Open VLM model on HF.")
+    parser.add_argument(
+        "--backend",
+        type=str,
+        default="qwen3-vl",
+        choices=["qwen3-vl", "qwen2.5-vl", "auto"],
+        help="Which transformers backend to use.",
+    )
     parser.add_argument("--device", type=str, default="cuda")
-    parser.add_argument("--max_episodes", type=int, default=1000, help="Max episodes to annotate (for prototyping).")
+    parser.add_argument("--max_episodes", type=int, default=0, help="0 means no limit.")
+    parser.add_argument("--prompt_file", type=str, default="", help="Optional prompt template file.")
+
+    parser.add_argument("--max_new_tokens", type=int, default=256)
+    parser.add_argument("--temperature", type=float, default=0.7)
+    parser.add_argument("--top_p", type=float, default=0.9)
+
     return parser.parse_args()
 
 
-def load_vlm(model_name: str, device: str):
-    """
-    Load an open-source VLM via transformers.
-    This is a sketch; you can adapt it to the actual model you use.
-    """
-    from transformers import AutoModelForCausalLM, AutoTokenizer
-
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-    model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch.float16).to(device)
-    model.eval()
-    return tokenizer, model
-
-
-def generate_coc_for_episode(
-    tokenizer,
-    model,
-    device: str,
-    instruction: str,
-    frames: List[Image.Image],
-    max_new_tokens: int = 256,
-) -> str:
-    """
-    Generate a chain-of-causality text for a single episode.
-
-    NOTE: This is a placeholder that uses text-only prompting. In practice you
-    should adapt it to pass images to the chosen VLM (e.g. Qwen2-VL, LLaVA).
-    """
-    # Simple text-only prompt for now.
-    prompt = (
-        "You see a robot executing a task.\n"
-        f"Task instruction: {instruction}\n"
-        "Based on the start, middle, and end of the episode, describe the chain of causality "
-        "of the robot's behavior in 3-6 short numbered steps.\n"
-        "Each step should say what the robot does and why that helps achieve the goal.\n"
-        "Format:\n"
-        "1. ...\n"
-        "2. ...\n"
-        "3. ...\n"
+def read_prompt(prompt_file: str) -> str:
+    if prompt_file:
+        with open(prompt_file, "r") as f:
+            return f.read().strip()
+    default_path = os.path.join(os.path.dirname(__file__), "prompts", "coc_episode_prompt.txt")
+    if os.path.exists(default_path):
+        with open(default_path, "r") as f:
+            return f.read().strip()
+    return (
+        "Write a Chain-of-Causality explanation in 4–7 numbered steps. "
+        "Each step must say what the robot does and why it helps achieve the goal."
     )
 
-    inputs = tokenizer(prompt, return_tensors="pt").to(device)
-    with torch.no_grad():
-        out = model.generate(
-            **inputs,
-            max_new_tokens=max_new_tokens,
-            do_sample=True,
-            top_p=0.9,
-            temperature=0.7,
+
+def to_pil_image(x: Any) -> Optional[Image.Image]:
+    if isinstance(x, Image.Image):
+        return x
+    if isinstance(x, torch.Tensor):
+        img = x
+        if img.dim() == 3 and img.shape[0] in (1, 3):
+            if img.dtype != torch.uint8:
+                img = (img * 255).clamp(0, 255).to(torch.uint8)
+            img_np = img.permute(1, 2, 0).cpu().numpy()
+            return Image.fromarray(img_np)
+    if isinstance(x, np.ndarray):
+        if x.ndim == 3:
+            return Image.fromarray(x.astype(np.uint8))
+    return None
+
+
+def build_episode_index(ds, episode_id_key: str) -> Dict[int, List[int]]:
+    episode_to_indices: Dict[int, List[int]] = {}
+    for idx in range(len(ds)):
+        step = ds[idx]
+        ep_id = int(step.get(episode_id_key, 0))
+        episode_to_indices.setdefault(ep_id, []).append(idx)
+    return episode_to_indices
+
+
+def filter_episode_ids(episode_ids: List[int], split: str, train_val_split: float) -> List[int]:
+    if split == "all":
+        return episode_ids
+    split_idx = int(len(episode_ids) * train_val_split)
+    if split == "train":
+        return episode_ids[:split_idx]
+    return episode_ids[split_idx:]
+
+
+def load_done_episode_ids(output_jsonl: str) -> set[int]:
+    done: set[int] = set()
+    if not os.path.exists(output_jsonl):
+        return done
+    with open(output_jsonl, "r") as f:
+        for line in f:
+            try:
+                obj = json.loads(line)
+                done.add(int(obj["episode_id"]))
+            except Exception:
+                continue
+    return done
+
+
+def extract_images_from_messages(messages: List[Dict[str, Any]]) -> List[Image.Image]:
+    images: List[Image.Image] = []
+    for msg in messages:
+        content = msg.get("content", [])
+        if not isinstance(content, list):
+            continue
+        for item in content:
+            if isinstance(item, dict) and item.get("type") == "image":
+                img = item.get("image")
+                if isinstance(img, Image.Image):
+                    images.append(img)
+    return images
+
+
+@dataclass
+class VlmClient:
+    processor: Any
+    model: Any
+    device: torch.device
+
+    def generate(
+        self,
+        messages: List[Dict[str, Any]],
+        max_new_tokens: int,
+        temperature: float,
+        top_p: float,
+    ) -> str:
+        text = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        images = extract_images_from_messages(messages)
+
+        inputs = self.processor(
+            text=[text],
+            images=images if images else None,
+            padding=True,
+            return_tensors="pt",
         )
-    text = tokenizer.decode(out[0], skip_special_tokens=True)
-    # Heuristic: return the part after the prompt.
-    return text[len(prompt) :].strip()
+        inputs = {k: v.to(self.device) for k, v in inputs.items()}
+
+        with torch.no_grad():
+            generated_ids = self.model.generate(
+                **inputs,
+                max_new_tokens=max_new_tokens,
+                do_sample=True,
+                temperature=temperature,
+                top_p=top_p,
+            )
+
+        out_ids = generated_ids[:, inputs["input_ids"].shape[1] :]
+        return self.processor.batch_decode(out_ids, skip_special_tokens=True)[0].strip()
+
+
+def load_vlm(model_name: str, backend: str, device: str) -> VlmClient:
+    from transformers import AutoProcessor
+
+    torch_device = torch.device(device if torch.cuda.is_available() else "cpu")
+    processor = AutoProcessor.from_pretrained(model_name)
+
+    model = None
+    if backend == "qwen3-vl":
+        try:
+            from transformers import Qwen3VLForConditionalGeneration  # type: ignore
+        except Exception as e:  # pragma: no cover
+            raise RuntimeError(
+                "Qwen3VLForConditionalGeneration not available. "
+                "Upgrade transformers (>=4.56) or use --backend qwen2.5-vl/auto."
+            ) from e
+        model = Qwen3VLForConditionalGeneration.from_pretrained(model_name, torch_dtype=torch.bfloat16)
+    elif backend == "qwen2.5-vl":
+        try:
+            from transformers import Qwen2_5_VLForConditionalGeneration  # type: ignore
+        except Exception as e:  # pragma: no cover
+            raise RuntimeError(
+                "Qwen2_5_VLForConditionalGeneration not available. "
+                "Upgrade transformers or use --backend auto."
+            ) from e
+        model = Qwen2_5_VLForConditionalGeneration.from_pretrained(model_name, torch_dtype=torch.bfloat16)
+    else:
+        from transformers import AutoModelForVision2Seq
+
+        model = AutoModelForVision2Seq.from_pretrained(model_name, torch_dtype=torch.bfloat16)
+
+    model = model.to(torch_device)
+    model.eval()
+    return VlmClient(processor=processor, model=model, device=torch_device)
+
+
+def build_messages(instruction: str, frames: List[Image.Image], prompt: str) -> List[Dict[str, Any]]:
+    content: List[Dict[str, Any]] = []
+    for img in frames:
+        content.append({"type": "image", "image": img})
+    content.append(
+        {
+            "type": "text",
+            "text": f"Task instruction: {instruction}\n\n{prompt}\n",
+        }
+    )
+    return [{"role": "user", "content": content}]
 
 
 def main():
     args = parse_args()
+    os.makedirs(os.path.dirname(args.output_jsonl) or ".", exist_ok=True)
 
-    ds = LeRobotDataset(args.dataset_name)  # load full dataset
+    prompt = read_prompt(args.prompt_file)
+    client = load_vlm(args.model_name, args.backend, args.device)
 
-    tokenizer, model = load_vlm(args.model_name, args.device)
+    ds = LeRobotDataset(args.dataset_name)
+    episode_to_indices = build_episode_index(ds, args.episode_id_key)
+    episode_ids = sorted(episode_to_indices.keys())
+    episode_ids = filter_episode_ids(episode_ids, args.split, args.train_val_split)
 
-    os.makedirs(os.path.dirname(args.output_jsonl), exist_ok=True)
-    num_episodes = ds.num_episodes if hasattr(ds, "num_episodes") else 1
+    done = load_done_episode_ids(args.output_jsonl) if args.resume else set()
 
-    with open(args.output_jsonl, "w") as out_f:
-        count = 0
-        for ep_id in tqdm(range(num_episodes), desc="Generating CoC"):
-            if count >= args.max_episodes:
+    mode = "a" if (args.resume and os.path.exists(args.output_jsonl)) else "w"
+    with open(args.output_jsonl, mode) as out_f:
+        n = 0
+        for ep_id in tqdm(episode_ids, desc=f"CoC ({args.split})"):
+            if ep_id in done:
+                continue
+            if args.max_episodes and n >= args.max_episodes:
                 break
 
-            # Simple approach: assume dataset has get_episode method.
-            if hasattr(ds, "get_episode"):
-                episode = ds.get_episode(ep_id)
-            else:
-                # Fallback: treat entire dataset as one long episode
-                episode = [ds[i] for i in range(len(ds))]
-
-            if len(episode) == 0:
+            indices = episode_to_indices[ep_id]
+            if not indices:
                 continue
 
-            # Instruction text.
-            step0 = episode[0]
-            instruction = step0.get(args.instruction_key, "")
+            step0 = ds[indices[0]]
+            instruction = str(step0.get(args.instruction_key, ""))
 
-            # Frames: pick start, mid, end indices (not passed to the VLM in this sketch).
-            t0 = 0
-            tm = len(episode) // 2
-            te = len(episode) - 1
+            i0 = indices[0]
+            im = indices[len(indices) // 2]
+            ie = indices[-1]
 
-            frames = []
-            for t in [t0, tm, te]:
-                step = episode[t]
-                img = step[args.image_key]  # [C,H,W] or PIL
-                if isinstance(img, torch.Tensor):
-                    img_np = img.permute(1, 2, 0).cpu().numpy()
-                    frames.append(Image.fromarray(img_np))
-                elif isinstance(img, np.ndarray):
-                    frames.append(Image.fromarray(img))
-                elif isinstance(img, Image.Image):
-                    frames.append(img)
+            frames: List[Image.Image] = []
+            for idx in [i0, im, ie]:
+                img = ds[idx].get(args.image_key)
+                pil = to_pil_image(img)
+                if pil is not None:
+                    frames.append(pil)
 
-            coc_text = generate_coc_for_episode(
-                tokenizer=tokenizer,
-                model=model,
-                device=args.device,
-                instruction=instruction,
-                frames=frames,
-            )
+            messages = build_messages(instruction, frames, prompt)
+            coc_text = ""
+            error: Optional[str] = None
+            try:
+                coc_text = client.generate(
+                    messages=messages,
+                    max_new_tokens=args.max_new_tokens,
+                    temperature=args.temperature,
+                    top_p=args.top_p,
+                )
+            except Exception as e:
+                error = repr(e)
 
             obj = {
                 "episode_id": ep_id,
                 "instruction": instruction,
+                "keyframe_indices": [i0, im, ie],
+                "model_name": args.model_name,
+                "backend": args.backend,
                 "coc_text": coc_text,
+                "error": error,
             }
             out_f.write(json.dumps(obj) + "\n")
-            count += 1
+            out_f.flush()
+            n += 1
 
 
 if __name__ == "__main__":
