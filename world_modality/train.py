@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
+from datetime import datetime
 from typing import Optional
 
 import torch
 from torch.optim import AdamW
+from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.data import DataLoader
 
 from .config import (
@@ -27,7 +30,7 @@ from .train_utils import (
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train world-modality models (A/B/C) on SR100.")
-    parser.add_argument("--model_type", type=str, choices=["A", "B", "C"], default="A")
+    parser.add_argument("--model_type", type=str, choices=["A", "B", "C", "C_no_world_input"], default="A")
     parser.add_argument("--dataset_name", type=str, required=True)
     parser.add_argument("--image_key", type=str, default="rgb", help="Key for image observation in LeRobotDataset.")
     parser.add_argument("--proprio_key", type=str, default="proprio", help="Key for proprio state in LeRobotDataset.")
@@ -35,11 +38,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch_size", type=int, default=256)
     parser.add_argument("--context_frames", type=int, default=3)
     parser.add_argument("--action_horizon", type=int, default=8)
-    parser.add_argument("--future_offset", type=int, default=8, help="Max future horizon K for world tokens (predict w_{t+1..t+K}).")
+    parser.add_argument(
+        "--future_offset",
+        type=int,
+        default=8,
+        help="Max future horizon K for world tokens (predict w_{t+1..t+K}).",
+    )
     parser.add_argument("--world_vocab_size", type=int, default=1024)
     parser.add_argument("--max_epochs", type=int, default=50)
     parser.add_argument("--learning_rate", type=float, default=3e-4)
     parser.add_argument("--lambda_world_loss", type=float, default=0.2)
+    parser.add_argument("--warmup_steps", type=int, default=0, help="Linear warmup steps (0 = no warmup)")
+    parser.add_argument("--gradient_clip", type=float, default=0.0, help="Max gradient norm (0 = no clipping)")
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--log_dir", type=str, default="logs")
@@ -50,6 +60,44 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--log_wandb", action="store_true")
     parser.add_argument("--wandb_project", type=str, default="world-modality-sr100")
     return parser.parse_args()
+
+
+def get_linear_warmup_scheduler(optimizer, warmup_steps: int, total_steps: int):
+    """Create a linear warmup scheduler."""
+
+    def lr_lambda(current_step: int):
+        if current_step < warmup_steps:
+            return float(current_step) / float(max(1, warmup_steps))
+        return 1.0
+
+    return LambdaLR(optimizer, lr_lambda)
+
+
+def save_config_json(args: argparse.Namespace, log_dir: str):
+    """Save experiment config to JSON for reproducibility."""
+    config = {
+        "model_type": args.model_type,
+        "seed": args.seed,
+        "batch_size": args.batch_size,
+        "learning_rate": args.learning_rate,
+        "max_epochs": args.max_epochs,
+        "warmup_steps": args.warmup_steps,
+        "gradient_clip": args.gradient_clip,
+        "lambda_world_loss": args.lambda_world_loss,
+        "world_vocab_size": args.world_vocab_size,
+        "context_frames": args.context_frames,
+        "action_horizon": args.action_horizon,
+        "future_offset": args.future_offset,
+        "dataset_name": args.dataset_name,
+        "image_key": args.image_key,
+        "proprio_key": args.proprio_key,
+        "action_key": args.action_key,
+        "timestamp": datetime.now().isoformat(),
+    }
+    config_path = os.path.join(log_dir, "config.json")
+    with open(config_path, "w") as f:
+        json.dump(config, f, indent=2)
+    print(f"Saved config to {config_path}")
 
 
 def main():
@@ -81,6 +129,8 @@ def main():
         max_epochs=args.max_epochs,
         learning_rate=args.learning_rate,
         lambda_world_loss=args.lambda_world_loss,
+        warmup_steps=args.warmup_steps,
+        gradient_clip=args.gradient_clip,
         log_wandb=args.log_wandb,
         wandb_project=args.wandb_project,
         seed=args.seed,
@@ -95,6 +145,9 @@ def main():
     )
 
     os.makedirs(args.log_dir, exist_ok=True)
+
+    # Save config JSON for reproducibility.
+    save_config_json(args, args.log_dir)
 
     train_loader, val_loader = create_dataloaders(exp_cfg.data)
 
@@ -123,6 +176,16 @@ def main():
 
     optimizer = AdamW(model.parameters(), lr=training_cfg.learning_rate, weight_decay=1e-4)
 
+    # Warmup scheduler.
+    total_steps = len(train_loader) * training_cfg.max_epochs
+    scheduler = None
+    if training_cfg.warmup_steps > 0:
+        scheduler = get_linear_warmup_scheduler(optimizer, training_cfg.warmup_steps, total_steps)
+        print(f"Using linear warmup for {training_cfg.warmup_steps} steps")
+
+    if training_cfg.gradient_clip > 0:
+        print(f"Using gradient clipping with max_norm={training_cfg.gradient_clip}")
+
     if training_cfg.log_wandb:
         import wandb
 
@@ -132,13 +195,14 @@ def main():
     for epoch in range(training_cfg.max_epochs):
         model.train()
         for batch in train_loader:
-            actions_gt = batch["actions"].to(device)
+            actions_gt = batch["actions"].to(device).float()
             # Aggregate over context by taking the last timestep.
-            states = batch["obs_states"][:, -1].to(device)
-            img_ctx = batch["img_embeddings"][:, -1].to(device)
+            states = batch["obs_states"][:, -1].to(device).float()
+            img_ctx = batch["img_embeddings"][:, -1].to(device).float()
             future_tokens = batch["future_world_tokens"].to(device)
             current_tokens = batch["current_world_token"].to(device)
 
+            # C uses world token as input; C_no_world_input does not.
             current_world = current_tokens if training_cfg.model_type == "C" else None
 
             pred_actions, world_logits = model(
@@ -146,20 +210,30 @@ def main():
             )
 
             act_loss = compute_action_loss(pred_actions, actions_gt)
+            # B, C, and C_no_world_input all have world loss.
             world_loss = (
                 compute_world_loss(world_logits, future_tokens)
-                if training_cfg.model_type in ("B", "C")
+                if training_cfg.model_type in ("B", "C", "C_no_world_input")
                 else torch.tensor(0.0, device=device)
             )
             loss = act_loss + training_cfg.lambda_world_loss * world_loss
 
             optimizer.zero_grad()
             loss.backward()
+
+            # Gradient clipping.
+            if training_cfg.gradient_clip > 0:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), training_cfg.gradient_clip)
+
             optimizer.step()
+
+            # Step scheduler.
+            if scheduler is not None:
+                scheduler.step()
 
             if global_step % 50 == 0:
                 msg = f"Epoch {epoch} step {global_step} | loss {loss.item():.4f} | act {act_loss.item():.4f}"
-                if training_cfg.model_type in ("B", "C"):
+                if training_cfg.model_type in ("B", "C", "C_no_world_input"):
                     msg += f" | world {world_loss.item():.4f}"
                 print(msg, flush=True)
 
@@ -170,24 +244,25 @@ def main():
                         "train/loss": loss.item(),
                         "train/action_loss": act_loss.item(),
                     }
-                    if training_cfg.model_type in ("B", "C"):
+                    if training_cfg.model_type in ("B", "C", "C_no_world_input"):
                         log_dict["train/world_loss"] = world_loss.item()
                     wandb.log(log_dict, step=global_step)
 
             global_step += 1
 
-        # Simple validation loop (action MSE + world accuracy)
+        # Simple validation loop (action MSE + world accuracy).
         model.eval()
         val_action_losses = []
         val_world_accuracies = []
         with torch.no_grad():
             for batch in val_loader:
-                actions_gt = batch["actions"].to(device)
-                states = batch["obs_states"][:, -1].to(device)
-                img_ctx = batch["img_embeddings"][:, -1].to(device)
+                actions_gt = batch["actions"].to(device).float()
+                states = batch["obs_states"][:, -1].to(device).float()
+                img_ctx = batch["img_embeddings"][:, -1].to(device).float()
                 future_tokens = batch["future_world_tokens"].to(device)
                 current_tokens = batch["current_world_token"].to(device)
 
+                # Only C uses world token as input in validation.
                 current_world = current_tokens if training_cfg.model_type == "C" else None
 
                 pred_actions, world_logits = model(
@@ -197,9 +272,9 @@ def main():
                 act_loss = compute_action_loss(pred_actions, actions_gt)
                 val_action_losses.append(act_loss.item())
 
-                if training_cfg.model_type in ("B", "C") and world_logits is not None:
+                # B, C, and C_no_world_input predict world tokens.
+                if training_cfg.model_type in ("B", "C", "C_no_world_input") and world_logits is not None:
                     preds = world_logits.argmax(dim=-1)
-                    # Compare over all horizons.
                     acc = (preds == future_tokens).float().mean().item()
                     val_world_accuracies.append(acc)
 
@@ -226,7 +301,7 @@ def main():
                 step=global_step,
             )
 
-        # Save a simple checkpoint per epoch
+        # Save a checkpoint per epoch.
         ckpt_path = os.path.join(args.log_dir, f"model_{args.model_type}_epoch{epoch}.pt")
         ckpt = {
             "model_state_dict": model.state_dict(),

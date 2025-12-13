@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from typing import Literal, Optional
 
 
-ModelType = Literal["A", "B", "C"]
+ModelType = Literal["A", "B", "C", "C_no_world_input"]
 
 
 @dataclass
@@ -52,6 +52,8 @@ class TrainingConfig:
     learning_rate: float = 3e-4
     weight_decay: float = 1e-4
     lambda_world_loss: float = 0.2
+    warmup_steps: int = 0  # Linear warmup steps (0 = no warmup)
+    gradient_clip: float = 0.0  # Max gradient norm (0 = no clipping)
     log_wandb: bool = False
     wandb_project: str = "world-modality-sr100"
     seed: int = 42
@@ -65,4 +67,3 @@ class ExperimentConfig:
     vq: VQConfig
     transformer: TransformerConfig
     training: TrainingConfig
-

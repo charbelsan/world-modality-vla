@@ -50,19 +50,28 @@ class SR100SequenceDataset(Dataset):
         - future world token w_{t+K}
     """
 
-    def __init__(self, cfg: DataConfig, split: str = "train", load_embeddings: bool = True):
+    def __init__(
+        self,
+        cfg: DataConfig,
+        split: str = "train",
+        load_embeddings: bool = True,
+        train_val_split: float = 0.9,
+    ):
         if LeRobotDataset is None:
             raise ImportError("lerobot is not installed; please `pip install lerobot`.")
 
         self.cfg = cfg
         self.split = split
-        self.dataset = LeRobotDataset(cfg.dataset_name, split=split)
+        self.train_val_split = train_val_split
+        # LeRobotDataset loads the full dataset; splitting is handled manually by episodes.
+        self.dataset = LeRobotDataset(cfg.dataset_name)
 
         self.context = cfg.context_frames
         self.horizon = cfg.action_horizon
         self.future_offset = cfg.future_offset
 
-        self.cache_paths = build_cache_paths(cfg, split)
+        # Use "train" cache for both train/val since tokens are precomputed on full dataset.
+        self.cache_paths = build_cache_paths(cfg, "train")
         self.world_tokens = self._load_world_tokens()
         self.embeddings = self._load_embeddings() if load_embeddings else None
 
@@ -96,13 +105,21 @@ class SR100SequenceDataset(Dataset):
         If the dataset exposes an `episode_id` field per step we use that to
         avoid crossing episode boundaries; otherwise the entire dataset is
         treated as a single episode.
+
+        Episodes are split into train/val based on self.train_val_split ratio.
         """
         episode_to_indices: Dict[int, List[int]] = {}
         sample0 = self.dataset[0]
         has_ep = "episode_id" in sample0
 
         if not has_ep:
-            return [list(range(len(self.dataset)))]
+            # No episode info - treat entire dataset as one episode and split by timesteps.
+            total_len = len(self.dataset)
+            split_idx = int(total_len * self.train_val_split)
+            if self.split == "train":
+                return [list(range(split_idx))]
+            else:
+                return [list(range(split_idx, total_len))]
 
         for idx in range(len(self.dataset)):
             step = self.dataset[idx]
@@ -110,7 +127,18 @@ class SR100SequenceDataset(Dataset):
             episode_to_indices.setdefault(ep_id, []).append(idx)
 
         # Sort episodes by id for reproducibility.
-        return [sorted(idxs) for _, idxs in sorted(episode_to_indices.items(), key=lambda x: x[0])]
+        all_episodes = [
+            sorted(idxs) for _, idxs in sorted(episode_to_indices.items(), key=lambda x: x[0])
+        ]
+
+        # Split episodes into train/val.
+        num_episodes = len(all_episodes)
+        split_idx = int(num_episodes * self.train_val_split)
+
+        if self.split == "train":
+            return all_episodes[:split_idx]
+        else:
+            return all_episodes[split_idx:]
 
     def _compute_indices(self) -> List[Tuple[int, int]]:
         """

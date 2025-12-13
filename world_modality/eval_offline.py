@@ -1,18 +1,16 @@
 from __future__ import annotations
 
 import argparse
-import os
 from typing import List
 
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
-from .config import DataConfig
+from .config import DataConfig, TransformerConfig
 from .data_sr100 import SR100SequenceDataset
 from .model import WorldPolicyTransformer
 from .train_utils import compute_action_loss
-from .config import TransformerConfig
 
 
 def parse_args() -> argparse.Namespace:
@@ -82,17 +80,20 @@ def main():
     model.eval()
 
     mse_list: List[float] = []
-    world_correct = None
+    # Top-1 and Top-5 accuracy per horizon.
+    world_top1_correct = None
+    world_top5_correct = None
     world_total = None
 
     with torch.no_grad():
         for batch in loader:
-            actions_gt = batch["actions"].to(device)
-            states = batch["obs_states"][:, -1].to(device)
-            img_ctx = batch["img_embeddings"][:, -1].to(device)
+            actions_gt = batch["actions"].to(device).float()
+            states = batch["obs_states"][:, -1].to(device).float()
+            img_ctx = batch["img_embeddings"][:, -1].to(device).float()
             future_tokens = batch["future_world_tokens"].to(device)
             current_tokens = batch["current_world_token"].to(device)
 
+            # Only C uses world token as input.
             current_world = current_tokens if model_type == "C" else None
 
             pred_actions, world_logits = model(
@@ -103,24 +104,58 @@ def main():
             mse_list.append(act_loss.item())
 
             if world_logits is not None:
-                preds = world_logits.argmax(dim=-1)  # [B, K]
-                if world_correct is None:
-                    k = preds.shape[1]
-                    world_correct = torch.zeros(k, dtype=torch.long)
-                    world_total = torch.zeros(k, dtype=torch.long)
-                eq = (preds == future_tokens).cpu()
-                world_correct += eq.sum(dim=0)
-                world_total += torch.tensor(eq.shape[0], dtype=torch.long).expand_as(world_total)
+                # world_logits: [B, K, V]
+                B, K, V = world_logits.shape
+
+                if world_top1_correct is None:
+                    world_top1_correct = torch.zeros(K, dtype=torch.long)
+                    world_top5_correct = torch.zeros(K, dtype=torch.long)
+                    world_total = torch.zeros(K, dtype=torch.long)
+
+                # Top-1 accuracy.
+                preds_top1 = world_logits.argmax(dim=-1)  # [B, K]
+                eq_top1 = (preds_top1 == future_tokens).cpu()
+                world_top1_correct += eq_top1.sum(dim=0)
+
+                # Top-5 accuracy.
+                _, preds_top5 = world_logits.topk(min(5, V), dim=-1)  # [B, K, 5]
+                future_tokens_expanded = future_tokens.unsqueeze(-1)  # [B, K, 1]
+                eq_top5 = (preds_top5 == future_tokens_expanded).any(dim=-1).cpu()  # [B, K]
+                world_top5_correct += eq_top5.sum(dim=0)
+
+                world_total += torch.tensor(B, dtype=torch.long).expand(K)
+
+    # Print results.
+    print("\n" + "=" * 50)
+    print(f"=== Model {model_type} Evaluation ===")
+    print("=" * 50)
 
     mean_mse = float(np.mean(mse_list)) if mse_list else 0.0
-    print(f"Offline eval on split={args.split}: action MSE = {mean_mse:.6f}")
+    print(f"Action MSE: {mean_mse:.6f}")
 
-    if world_correct is not None and world_total is not None:
-        acc_per_k = (world_correct.float() / world_total.float()).numpy()
-        for k, acc in enumerate(acc_per_k, start=1):
-            print(f"World-token top-1 accuracy at horizon k={k}: {acc:.4f}")
+    if world_top1_correct is not None and world_total is not None:
+        # Overall accuracy (across all horizons).
+        overall_top1 = world_top1_correct.sum().float() / world_total.sum().float()
+        overall_top5 = world_top5_correct.sum().float() / world_total.sum().float()
+
+        print(f"\nWorld Token Top-1 Accuracy: {overall_top1.item():.4f}")
+        print(f"World Token Top-5 Accuracy: {overall_top5.item():.4f}")
+
+        # Per-horizon accuracy.
+        top1_per_k = (world_top1_correct.float() / world_total.float()).numpy()
+        top5_per_k = (world_top5_correct.float() / world_total.float()).numpy()
+
+        print(
+            "\nPer-horizon Top-1: "
+            + ", ".join([f"k={k+1}: {acc:.3f}" for k, acc in enumerate(top1_per_k)])
+        )
+        print(
+            "Per-horizon Top-5: "
+            + ", ".join([f"k={k+1}: {acc:.3f}" for k, acc in enumerate(top5_per_k)])
+        )
+
+    print("=" * 50 + "\n")
 
 
 if __name__ == "__main__":
     main()
-

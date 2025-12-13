@@ -50,7 +50,7 @@ class WorldPolicyTransformer(nn.Module):
         future_horizon: int,
     ):
         super().__init__()
-        assert model_type in ("A", "B", "C")
+        assert model_type in ("A", "B", "C", "C_no_world_input")
         self.model_type: ModelType = model_type
         self.cfg = cfg
         self.horizon = horizon
@@ -73,7 +73,8 @@ class WorldPolicyTransformer(nn.Module):
 
         # Determine sequence length
         base_len = 1 + horizon  # OBS + ACT_Q
-        if model_type == "B":
+        if model_type in ("B", "C_no_world_input"):
+            # B and C_no_world_input: same layout (no WORLD_CUR input).
             seq_len = base_len + future_horizon  # + FUT_QUERY × K
         elif model_type == "C":
             seq_len = base_len + 1 + future_horizon  # + WORLD_CUR + FUT_QUERY × K
@@ -123,7 +124,8 @@ class WorldPolicyTransformer(nn.Module):
             world_cur = world_cur.unsqueeze(1)  # [B, 1, D]
             tokens.append(world_cur)
 
-        if self.model_type in ("B", "C"):
+        # B, C, and C_no_world_input all have future queries for world-token prediction.
+        if self.model_type in ("B", "C", "C_no_world_input"):
             fut_q = self.future_queries.expand(B, -1, -1)
             tokens.append(fut_q)
 
@@ -137,7 +139,8 @@ class WorldPolicyTransformer(nn.Module):
         if self.model_type == "A":
             act_start = 1
             fut_start = None
-        elif self.model_type == "B":
+        elif self.model_type in ("B", "C_no_world_input"):
+            # B and C_no_world_input share the same layout (no WORLD_CUR input).
             fut_start = 1
             act_start = 1 + self.future_horizon
         else:  # "C"
@@ -148,7 +151,7 @@ class WorldPolicyTransformer(nn.Module):
         actions = self.action_head(act_h)
 
         world_logits = None
-        if self.model_type in ("B", "C") and fut_start is not None:
+        if self.model_type in ("B", "C", "C_no_world_input") and fut_start is not None:
             fut_h = h[:, fut_start : fut_start + self.future_horizon, :]  # [B, K, D]
             world_logits = self.world_head(fut_h)  # [B, K, V]
 
