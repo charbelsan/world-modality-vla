@@ -90,6 +90,22 @@ w_t = \arg\min_{j} \lVert e_t - c_j\rVert^2.
 
 This yields a discrete vocabulary of size \(N\) that can be predicted with next‑token‑style cross entropy, and inspected by nearest‑neighbor visualization in embedding space.
 
+#### Implementation detail (what is learned vs what is quantized)
+
+- **World token creation** is **quantization** (k‑means/VQ) of the frozen embedding \(e_t\). No MLP is required.
+- **MLP/linear projections** appear later inside the policy to map continuous features/tokens into transformer width \(d\).
+
+Concretely, the pipeline is:
+
+1) Compute embeddings for all frames: \(e_t=\mathrm{Enc}_v(o_t)\).  
+2) (Optional) pre-process \(e_t\) for clustering (e.g., L2‑normalize, PCA/whitening).  
+3) Fit k‑means on a large sample \(\{e_t\}\) to get centroids \(\{c_j\}_{j=1}^N\).  
+4) Assign tokens by nearest centroid: \(w_t=\arg\min_j\lVert e_t-c_j\rVert^2\).  
+5) Cache:
+   - `*_embeddings.fp16.npy` (embeddings),
+   - `*_world_tokens.int.npy` (ids),
+   - `*_codebook_centroids.f32.npy` (centroids for inference‑time tokenization).
+
 ### 3.3 Why this counts as “world modeling”
 
 This is **not** pixel prediction. The claim is narrower and more testable:
@@ -115,6 +131,23 @@ Let \(d\) be the transformer width. We create tokens:
 - optional language tokens `LANG` if dataset provides instruction text.
 
 The trunk is a standard self‑attention transformer encoder over the concatenated sequence.
+
+**Projection layers (where MLPs live):**
+
+- The observation embedding \(e_t\in\mathbb{R}^{d_e}\) is mapped into transformer width by a learned projection:
+  \[
+  z^{obs}_t = \mathrm{proj}_{img}(e_t)\in\mathbb{R}^{d}.
+  \]
+- Proprio/state \(s_t\) is mapped by an MLP:
+  \[
+  z^{state}_t = \mathrm{proj}_{state}(s_t)\in\mathbb{R}^{d}.
+  \]
+- The current world token id \(w_t\in\{0,\dots,N-1\}\) is mapped by an embedding table:
+  \[
+  z^{world}_t = \mathrm{Emb}_{world}(w_t)\in\mathbb{R}^{d}.
+  \]
+
+These are **inside the policy** and are separate from the offline quantization step that produced \(w_t\).
 
 ### 4.2 Four controlled variants
 
@@ -299,6 +332,27 @@ This section frames major prior directions as **principles** and explains how we
 
 ---
 
+## 8.5 Beyond VLA: a general “World Modality” method for VLMs
+
+Although we evaluate on robot control (VLA), the core mechanism is model‑agnostic:
+
+> any transformer that processes token sequences can be augmented with a discrete world token stream that is consumed and predicted.
+
+### Example: adding world tokens to Qwen‑style VLMs (e.g., Qwen3‑VL)
+
+Two viable implementation strategies:
+
+1) **Tokenizer‑level world codes (fastest):** add special tokens like `<|world_0123|>` to the text vocabulary and train the model to both read and generate them. This makes world codes first‑class in the *sequence*, but shares the same embedding table as text.
+
+2) **Separate world embedding table (most faithful):** keep the text tokenizer unchanged, add a dedicated `Emb_world` table, and splice world embeddings into the transformer input sequence alongside text/vision embeddings. This mirrors the VLA setup (separate modality embeddings) and makes “world” a distinct input channel.
+
+In both cases, the world codes themselves can be obtained by quantizing:
+
+- a frozen external encoder (e.g., DINO/V‑JEPA features), or
+- the VLM’s **own vision tower** pooled features (often better aligned with the VLM’s internal geometry).
+
+**Training objective:** predict future world codes (next‑token CE) optionally alongside normal language objectives. For robotics, this can be paired with action prediction; for pure VLM settings, it becomes a controllable “predictive state” stream for videos/temporal tasks.
+
 ## 9. Toward a Two‑Head “Act + Explain” Model (Chain‑of‑Causality)
 
 We extend the world‑token VLA with a CoC head that produces a multi‑step causal narrative of behavior grounded in the world rollout.
@@ -369,4 +423,3 @@ The key empirical question is not whether future prediction helps (it often does
 - Crash‑proof logs: `ops/README.md`
 - CoC generation: `coc_vla/coc_generation.py`
 - CoC design notes and external repo fetcher: `coc_vla/DEEP_DIVE.md`, `coc_vla/external/fetch_external_repos.sh`
-
