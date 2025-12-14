@@ -23,6 +23,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--image_key", type=str, default="rgb")
     parser.add_argument("--proprio_key", type=str, default="proprio")
     parser.add_argument("--action_key", type=str, default="action")
+    parser.add_argument("--use_language", action="store_true", help="Enable instruction conditioning.")
+    parser.add_argument("--instruction_key", type=str, default="instruction")
+    parser.add_argument("--episode_id_key", type=str, default="episode_id")
     parser.add_argument("--cache_dir", type=str, default="cache")
     parser.add_argument("--batch_size", type=int, default=256)
     parser.add_argument("--num_workers", type=int, default=8)
@@ -50,6 +53,9 @@ def main():
         image_key=args.image_key,
         proprio_key=args.proprio_key,
         action_key=args.action_key,
+        instruction_key=args.instruction_key,
+        episode_id_key=args.episode_id_key,
+        use_language=bool(meta.get("use_language", cfg.get("use_language", args.use_language))),
         cache_dir=args.cache_dir,
         train_split=cfg.get("train_split", "train"),
         val_split=args.split,
@@ -68,6 +74,8 @@ def main():
 
     transformer_cfg = TransformerConfig()
     img_emb_dim = int(meta.get("img_emb_dim", 768))
+    use_language = bool(meta.get("use_language", cfg.get("use_language", args.use_language)))
+    lang_dim = int(meta.get("lang_dim", 0))
     state_dim = int(meta.get("state_dim", ds[0]["obs_states"].shape[-1]))
     action_dim = int(meta.get("action_dim", ds[0]["actions"].shape[-1]))
     horizon = int(meta.get("action_horizon", data_cfg.action_horizon))
@@ -83,6 +91,8 @@ def main():
         world_vocab_size=world_vocab_size,
         horizon=horizon,
         future_horizon=future_horizon,
+        use_language=use_language,
+        lang_dim=lang_dim,
     ).to(device)
     model.load_state_dict(ckpt["model_state_dict"])
     model.eval()
@@ -100,12 +110,19 @@ def main():
             actions_gt = batch["actions"].to(device).float()
             states = batch["obs_states"][:, -1].to(device).float()
             img_ctx = batch["img_embeddings"][:, -1].to(device).float()
+            lang_emb = batch.get("instruction_embeddings")
+            if use_language:
+                assert lang_emb is not None
+                lang_emb = lang_emb.to(device).float()
             current_tokens = batch["current_world_token"].to(device)
 
             # Clean run: use true WORLD_CUR (only for model C).
             current_world_clean = current_tokens if uses_world_input else None
             pred_actions_clean, _ = model(
-                img_emb=img_ctx, state=states, current_world_token=current_world_clean
+                img_emb=img_ctx,
+                state=states,
+                current_world_token=current_world_clean,
+                lang_emb=lang_emb if use_language else None,
             )
             mse_c = compute_action_loss(pred_actions_clean, actions_gt).item()
             mse_clean.append(mse_c)
@@ -123,7 +140,10 @@ def main():
                     random_tokens, dtype=torch.long, device=device
                 )
                 pred_actions_corrupt, _ = model(
-                    img_emb=img_ctx, state=states, current_world_token=random_tokens_t
+                    img_emb=img_ctx,
+                    state=states,
+                    current_world_token=random_tokens_t,
+                    lang_emb=lang_emb if use_language else None,
                 )
                 mse_r = compute_action_loss(pred_actions_corrupt, actions_gt).item()
             else:

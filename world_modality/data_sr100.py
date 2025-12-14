@@ -22,6 +22,7 @@ class WorldTokenCachePaths:
     embeddings_path: str
     tokens_path: str
     centroids_path: str
+    instruction_embeddings_path: str
 
 
 def build_cache_paths(cfg: DataConfig, split: str) -> WorldTokenCachePaths:
@@ -30,10 +31,12 @@ def build_cache_paths(cfg: DataConfig, split: str) -> WorldTokenCachePaths:
     emb_path = os.path.join(cache_root, f"{split}_embeddings.fp16.npy")
     tok_path = os.path.join(cache_root, f"{split}_world_tokens.int.npy")
     cen_path = os.path.join(cache_root, f"{split}_codebook_centroids.f32.npy")
+    instr_path = os.path.join(cache_root, f"{split}_instruction_embeddings.fp16.npy")
     return WorldTokenCachePaths(
         embeddings_path=emb_path,
         tokens_path=tok_path,
         centroids_path=cen_path,
+        instruction_embeddings_path=instr_path,
     )
 
 
@@ -74,6 +77,7 @@ class SR100SequenceDataset(Dataset):
         self.cache_paths = build_cache_paths(cfg, "train")
         self.world_tokens = self._load_world_tokens()
         self.embeddings = self._load_embeddings() if load_embeddings else None
+        self.instruction_embeddings = self._load_instruction_embeddings() if cfg.use_language else None
 
         # Build mapping from episodes to global indices and valid (episode_idx, local_t)
         self.episode_indices: List[List[int]] = self._build_episode_indices()
@@ -97,6 +101,15 @@ class SR100SequenceDataset(Dataset):
         emb = np.load(self.cache_paths.embeddings_path, mmap_mode="r")
         return emb.astype(np.float16)
 
+    def _load_instruction_embeddings(self) -> np.ndarray:
+        if not os.path.exists(self.cache_paths.instruction_embeddings_path):
+            raise FileNotFoundError(
+                f"Instruction embedding cache not found at {self.cache_paths.instruction_embeddings_path}. "
+                "Run `python -m world_modality.precompute_instruction_embeddings ...` first."
+            )
+        emb = np.load(self.cache_paths.instruction_embeddings_path, mmap_mode="r")
+        return emb.astype(np.float16)
+
     def _build_episode_indices(self) -> List[List[int]]:
         """
         Build a list of episodes, each represented as an ordered list of global
@@ -110,7 +123,8 @@ class SR100SequenceDataset(Dataset):
         """
         episode_to_indices: Dict[int, List[int]] = {}
         sample0 = self.dataset[0]
-        has_ep = "episode_id" in sample0
+        ep_key = self.cfg.episode_id_key
+        has_ep = ep_key in sample0
 
         if not has_ep:
             # No episode info - treat entire dataset as one episode and split by timesteps.
@@ -123,7 +137,7 @@ class SR100SequenceDataset(Dataset):
 
         for idx in range(len(self.dataset)):
             step = self.dataset[idx]
-            ep_id = int(step["episode_id"])
+            ep_id = int(step[ep_key])
             episode_to_indices.setdefault(ep_id, []).append(idx)
 
         # Sort episodes by id for reproducibility.
@@ -194,6 +208,9 @@ class SR100SequenceDataset(Dataset):
         # Current and future world tokens (global indices).
         cur_global_idx = self._get_global_index(ep_idx, local_t)
         current_token = self.world_tokens[cur_global_idx]
+        instruction_emb = (
+            self.instruction_embeddings[cur_global_idx] if self.instruction_embeddings is not None else None
+        )
 
         # Predict tokens for w_{t+1}..w_{t+K}, where K = future_offset.
         future_idxs = [
@@ -217,5 +234,8 @@ class SR100SequenceDataset(Dataset):
         if img_emb_ctx:
             img_emb_ctx_t = torch.as_tensor(np.stack(img_emb_ctx))  # [T_ctx, d_e]
             out["img_embeddings"] = img_emb_ctx_t
+
+        if instruction_emb is not None:
+            out["instruction_embeddings"] = torch.as_tensor(instruction_emb)  # [d_lang]
 
         return out

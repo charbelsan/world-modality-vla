@@ -35,6 +35,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--image_key", type=str, default="rgb", help="Key for image observation in LeRobotDataset.")
     parser.add_argument("--proprio_key", type=str, default="proprio", help="Key for proprio state in LeRobotDataset.")
     parser.add_argument("--action_key", type=str, default="action", help="Key for action in LeRobotDataset.")
+    parser.add_argument("--use_language", action="store_true", help="Enable instruction conditioning (VLA).")
+    parser.add_argument("--instruction_key", type=str, default="instruction", help="Key for instruction text.")
+    parser.add_argument("--episode_id_key", type=str, default="episode_id", help="Key for episode id grouping.")
+    parser.add_argument(
+        "--text_model_name",
+        type=str,
+        default="distilbert-base-uncased",
+        help="Text encoder used to precompute instruction embeddings (saved into checkpoint meta).",
+    )
+    parser.add_argument(
+        "--text_max_length",
+        type=int,
+        default=64,
+        help="Max token length for the text encoder used in precompute (saved into checkpoint meta).",
+    )
     parser.add_argument("--batch_size", type=int, default=256)
     parser.add_argument("--context_frames", type=int, default=3)
     parser.add_argument("--action_horizon", type=int, default=8)
@@ -92,6 +107,11 @@ def save_config_json(args: argparse.Namespace, log_dir: str):
         "image_key": args.image_key,
         "proprio_key": args.proprio_key,
         "action_key": args.action_key,
+        "use_language": args.use_language,
+        "instruction_key": args.instruction_key,
+        "episode_id_key": args.episode_id_key,
+        "text_model_name": args.text_model_name,
+        "text_max_length": args.text_max_length,
         "timestamp": datetime.now().isoformat(),
     }
     config_path = os.path.join(log_dir, "config.json")
@@ -111,6 +131,9 @@ def main():
         image_key=args.image_key,
         proprio_key=args.proprio_key,
         action_key=args.action_key,
+        instruction_key=args.instruction_key,
+        episode_id_key=args.episode_id_key,
+        use_language=args.use_language,
         batch_size=args.batch_size,
         context_frames=args.context_frames,
         action_horizon=args.action_horizon,
@@ -165,6 +188,14 @@ def main():
             "precomputed image embeddings."
         )
     img_emb_dim = batch["img_embeddings"].shape[-1]
+    lang_dim = 0
+    if args.use_language:
+        if "instruction_embeddings" not in batch:
+            raise ValueError(
+                "use_language=True but dataset batch has no instruction_embeddings. "
+                "Run `python -m world_modality.precompute_instruction_embeddings ...` first."
+            )
+        lang_dim = int(batch["instruction_embeddings"].shape[-1])
 
     model = build_model(
         exp_cfg,
@@ -172,6 +203,8 @@ def main():
         state_dim=state_dim,
         action_dim=action_dim,
         world_vocab_size=args.world_vocab_size,
+        use_language=args.use_language,
+        lang_dim=lang_dim,
     ).to(device)
 
     optimizer = AdamW(model.parameters(), lr=training_cfg.learning_rate, weight_decay=1e-4)
@@ -199,6 +232,10 @@ def main():
             # Aggregate over context by taking the last timestep.
             states = batch["obs_states"][:, -1].to(device).float()
             img_ctx = batch["img_embeddings"][:, -1].to(device).float()
+            lang_emb = batch.get("instruction_embeddings")
+            if args.use_language:
+                assert lang_emb is not None
+                lang_emb = lang_emb.to(device).float()
             future_tokens = batch["future_world_tokens"].to(device)
             current_tokens = batch["current_world_token"].to(device)
 
@@ -206,7 +243,10 @@ def main():
             current_world = current_tokens if training_cfg.model_type == "C" else None
 
             pred_actions, world_logits = model(
-                img_emb=img_ctx, state=states, current_world_token=current_world
+                img_emb=img_ctx,
+                state=states,
+                current_world_token=current_world,
+                lang_emb=lang_emb if args.use_language else None,
             )
 
             act_loss = compute_action_loss(pred_actions, actions_gt)
@@ -259,6 +299,10 @@ def main():
                 actions_gt = batch["actions"].to(device).float()
                 states = batch["obs_states"][:, -1].to(device).float()
                 img_ctx = batch["img_embeddings"][:, -1].to(device).float()
+                lang_emb = batch.get("instruction_embeddings")
+                if args.use_language:
+                    assert lang_emb is not None
+                    lang_emb = lang_emb.to(device).float()
                 future_tokens = batch["future_world_tokens"].to(device)
                 current_tokens = batch["current_world_token"].to(device)
 
@@ -266,7 +310,10 @@ def main():
                 current_world = current_tokens if training_cfg.model_type == "C" else None
 
                 pred_actions, world_logits = model(
-                    img_emb=img_ctx, state=states, current_world_token=current_world
+                    img_emb=img_ctx,
+                    state=states,
+                    current_world_token=current_world,
+                    lang_emb=lang_emb if args.use_language else None,
                 )
 
                 act_loss = compute_action_loss(pred_actions, actions_gt)
@@ -310,6 +357,10 @@ def main():
                 "state_dim": state_dim,
                 "action_dim": action_dim,
                 "img_emb_dim": img_emb_dim,
+                "lang_dim": lang_dim,
+                "use_language": args.use_language,
+                "text_model_name": args.text_model_name,
+                "text_max_length": args.text_max_length,
                 "world_vocab_size": args.world_vocab_size,
                 "model_type": args.model_type,
                 "action_horizon": args.action_horizon,

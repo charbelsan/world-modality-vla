@@ -63,6 +63,38 @@ Artifacts (per split) under `cache/<dataset_name>/`:
 - `*_world_tokens.int.npy` – per-frame discrete world tokens `w_t`
 - `*_codebook_centroids.f32.npy` – VQ centroids for inference-time tokenization
 
+## 3b. (Optional) Precompute instruction embeddings (VLA)
+
+If you want instruction-conditioned policies (`--use_language`), precompute per-frame `instruction_embeddings`:
+
+### Case A: dataset contains instruction strings
+
+```bash
+python -m world_modality.precompute_instruction_embeddings \
+  --dataset_name <DATASET> \
+  --cache_dir cache \
+  --instruction_key instruction \
+  --episode_id_key episode_id \
+  --text_model_name distilbert-base-uncased \
+  --max_length 64
+```
+
+### Case B: dataset provides `meta/tasks.jsonl` (MetaWorld)
+
+```bash
+python -m world_modality.precompute_instruction_embeddings \
+  --dataset_name HuggingFaceVLA/metaworld_mt50 \
+  --cache_dir cache \
+  --episode_id_key episode_index \
+  --tasks_jsonl https://huggingface.co/datasets/HuggingFaceVLA/metaworld_mt50/raw/main/meta/tasks.jsonl \
+  --task_index_key task_index \
+  --task_text_field task \
+  --text_model_name distilbert-base-uncased \
+  --max_length 64
+```
+
+The training script stores `text_model_name` / `text_max_length` in the checkpoint meta so rollout evaluators can match the same encoder.
+
 ## 4. Train baselines A/B and world-modality model C
 
 All three models share the same transformer backbone; they differ only in sequence layout and whether world tokens are an auxiliary target (B) or an input modality (C).
@@ -217,6 +249,15 @@ This reports action MSE in the clean vs corrupted setting and their ratio.
 ## 8. Crash-proofing (VM restarts)
 
 Do not rely on local disk for checkpoints/logs if the VM is unstable.
+
+## 9. Simulation rollouts (success rate)
+
+Offline MSE is useful but not a benchmark. This repo also includes **closed-loop rollout evaluation**:
+
+- `benchmarks/libero/`: LIBERO success rate (robosuite + MuJoCo)
+- `benchmarks/metaworld/`: MetaWorld MT50 success rate (MuJoCo)
+
+See `benchmarks/README.md` and the per-benchmark READMEs for install + run commands.
 
 See `ops/README.md` for Google Drive sync via `rclone`.
 

@@ -41,6 +41,8 @@ def build_model(
     state_dim: int,
     action_dim: int,
     world_vocab_size: int,
+    use_language: bool = False,
+    lang_dim: int = 0,
 ) -> WorldPolicyTransformer:
     return WorldPolicyTransformer(
         model_type=exp_cfg.training.model_type,
@@ -51,6 +53,8 @@ def build_model(
         world_vocab_size=world_vocab_size,
         horizon=exp_cfg.data.action_horizon,
         future_horizon=exp_cfg.data.future_offset,
+        use_language=use_language,
+        lang_dim=lang_dim,
     )
 
 

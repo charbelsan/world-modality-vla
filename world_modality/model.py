@@ -60,6 +60,8 @@ class WorldPolicyTransformer(nn.Module):
         world_vocab_size: int,
         horizon: int,
         future_horizon: int,
+        use_language: bool = False,
+        lang_dim: int = 0,
     ):
         super().__init__()
         assert model_type in ("A", "B", "C", "C_no_world_input")
@@ -67,31 +69,33 @@ class WorldPolicyTransformer(nn.Module):
         self.cfg = cfg
         self.horizon = horizon
         self.future_horizon = future_horizon
+        self.use_language = use_language
 
         d_model = cfg.d_model
 
         # Per-modality projections
         self.proj_img = nn.Linear(obs_dim, d_model)
         self.proj_state = nn.Linear(state_dim, d_model)
+        self.proj_lang = nn.Linear(lang_dim, d_model) if use_language else None
 
         # World token embedding (only consumed as input for C; shared with output head)
         self.emb_world = nn.Embedding(world_vocab_size, d_model)
 
         # Learnable tokens
+        self.lang_token = nn.Parameter(torch.zeros(1, 1, d_model)) if use_language else None
         self.obs_token = nn.Parameter(torch.zeros(1, 1, d_model))
         # One learnable query per future horizon step.
         self.future_queries = nn.Parameter(torch.zeros(1, future_horizon, d_model))
         self.action_queries = nn.Parameter(torch.zeros(1, horizon, d_model))
 
         # Determine sequence length
-        base_len = 1 + horizon  # OBS + ACT_Q
-        if model_type in ("B", "C_no_world_input"):
-            # B and C_no_world_input: same layout (no WORLD_CUR input).
-            seq_len = base_len + future_horizon  # + FUT_QUERY × K
-        elif model_type == "C":
-            seq_len = base_len + 1 + future_horizon  # + WORLD_CUR + FUT_QUERY × K
-        else:
-            seq_len = base_len
+        seq_len = 1 + horizon  # OBS + ACT_Q
+        if use_language:
+            seq_len += 1  # LANG
+        if model_type == "C":
+            seq_len += 1  # WORLD_CUR
+        if model_type in ("B", "C", "C_no_world_input"):
+            seq_len += future_horizon  # FUT_QUERY × K
 
         self.backbone = TransformerBackbone(cfg, seq_len=seq_len)
 
@@ -102,6 +106,8 @@ class WorldPolicyTransformer(nn.Module):
         self._reset_parameters()
 
     def _reset_parameters(self):
+        if self.lang_token is not None:
+            nn.init.normal_(self.lang_token, mean=0.0, std=0.02)
         nn.init.normal_(self.obs_token, mean=0.0, std=0.02)
         nn.init.normal_(self.future_queries, mean=0.0, std=0.02)
         nn.init.normal_(self.action_queries, mean=0.0, std=0.02)
@@ -111,6 +117,7 @@ class WorldPolicyTransformer(nn.Module):
         img_emb: torch.Tensor,
         state: torch.Tensor,
         current_world_token: Optional[torch.Tensor] = None,
+        lang_emb: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         """
         Args:
@@ -125,10 +132,20 @@ class WorldPolicyTransformer(nn.Module):
         B = img_emb.size(0)
         d_model = self.cfg.d_model
 
+        tokens = []
+
+        if self.use_language:
+            assert self.proj_lang is not None
+            assert self.lang_token is not None
+            assert lang_emb is not None, "use_language=True requires lang_emb."
+            lang = self.proj_lang(lang_emb)  # [B, D]
+            lang_tok = self.lang_token.expand(B, -1, -1) + lang.unsqueeze(1)
+            tokens.append(lang_tok)
+
         obs = self.proj_img(img_emb) + self.proj_state(state)  # [B, D]
         obs_tok = self.obs_token.expand(B, -1, -1) + obs.unsqueeze(1)
 
-        tokens = [obs_tok]
+        tokens.append(obs_tok)
 
         if self.model_type == "C":
             assert current_world_token is not None, "Model C requires current_world_token input."
@@ -147,17 +164,13 @@ class WorldPolicyTransformer(nn.Module):
         x = torch.cat(tokens, dim=1)  # [B, L, D]
         h = self.backbone(x)
 
-        # Readout indices
-        if self.model_type == "A":
-            act_start = 1
-            fut_start = None
-        elif self.model_type in ("B", "C_no_world_input"):
-            # B and C_no_world_input share the same layout (no WORLD_CUR input).
-            fut_start = 1
-            act_start = 1 + self.future_horizon
-        else:  # "C"
-            fut_start = 2
-            act_start = 2 + self.future_horizon
+        # Readout indices: ACT_Q are always appended last.
+        act_start = h.shape[1] - self.horizon
+        fut_start = (
+            act_start - self.future_horizon
+            if self.model_type in ("B", "C", "C_no_world_input")
+            else None
+        )
 
         act_h = h[:, act_start : act_start + self.horizon, :]
         actions = self.action_head(act_h)
