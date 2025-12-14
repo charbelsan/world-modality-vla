@@ -71,6 +71,42 @@ This writes:
 - `cache/<dataset>/train_world_tokens.int.npy`
 - `cache/<dataset>/train_codebook_centroids.f32.npy`
 
+### 1.2b (Optional) Precompute instruction embeddings (VLA)
+
+If you want a **true VLA** (instruction-conditioned policy), you must provide `instruction_embeddings` per frame.
+
+Two common cases:
+
+**Case A: dataset has an instruction string field**
+
+```bash
+python -m world_modality.precompute_instruction_embeddings \
+  --dataset_name <DATASET> \
+  --cache_dir cache \
+  --instruction_key instruction \
+  --episode_id_key episode_id \
+  --text_model_name distilbert-base-uncased \
+  --max_length 64
+```
+
+**Case B: dataset only has `task_index`, but ships `meta/tasks.jsonl` (e.g. MetaWorld)**
+
+Example for `HuggingFaceVLA/metaworld_mt50`:
+
+```bash
+python -m world_modality.precompute_instruction_embeddings \
+  --dataset_name HuggingFaceVLA/metaworld_mt50 \
+  --cache_dir cache \
+  --episode_id_key episode_index \
+  --tasks_jsonl https://huggingface.co/datasets/HuggingFaceVLA/metaworld_mt50/raw/main/meta/tasks.jsonl \
+  --task_index_key task_index \
+  --task_text_field task \
+  --text_model_name distilbert-base-uncased \
+  --max_length 64
+```
+
+Important: rollouts must use the **same** `text_model_name` / `max_length` used here (the training script saves them in the checkpoint meta).
+
 ### 1.3 Train A/B/C/C_no_world_input
 
 All training runs write `config.json` into the `--log_dir`.
@@ -156,3 +192,23 @@ python -m coc_vla.coc_generation \
 ```
 
 Use `--resume` and sync the JSONL if the machine is unstable.
+
+---
+
+## 4) Closed-loop benchmark rollouts (success rate)
+
+For publication-grade claims you usually want at least one **closed-loop** success-rate metric.
+
+This repo includes:
+
+- `benchmarks/libero/` (LIBERO tasks; robosuite + MuJoCo)
+- `benchmarks/metaworld/` (MetaWorld MT50; MuJoCo)
+
+These deps are heavier than the base training stack; install them in a dedicated env.
+
+Examples:
+
+```bash
+python -m benchmarks.libero.eval_libero_success --help
+python -m benchmarks.metaworld.eval_metaworld_success --help
+```
