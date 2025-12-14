@@ -38,9 +38,50 @@ python -m benchmarks.libero.eval_libero_success \
   --device cuda
 ```
 
+## 3) (Optional) Train with language on `HuggingFaceVLA/libero`
+
+The public LeRobot LIBERO dataset provides `task_index` but does not ship a `tasks.jsonl` in the repo.
+
+To train an instruction-conditioned policy (`--use_language`), first export task language strings from the LIBERO benchmark:
+
+```bash
+python -m benchmarks.libero.export_libero_tasks_jsonl \
+  --benchmark libero_10 \
+  --out benchmarks/libero/tasks_libero10.jsonl
+```
+
+Then precompute per-frame instruction embeddings using that mapping:
+
+```bash
+python -m world_modality.precompute_instruction_embeddings \
+  --dataset_name HuggingFaceVLA/libero \
+  --cache_dir cache \
+  --episode_id_key episode_index \
+  --tasks_jsonl benchmarks/libero/tasks_libero10.jsonl \
+  --task_index_key task_index \
+  --task_text_field task \
+  --text_model_name distilbert-base-uncased \
+  --max_length 64
+```
+
+Finally train with `--use_language`:
+
+```bash
+python train_model_c.py \
+  --dataset_name HuggingFaceVLA/libero \
+  --image_key observation.images.image \
+  --proprio_key observation.state \
+  --action_key action \
+  --episode_id_key episode_index \
+  --cache_dir cache \
+  --use_language \
+  --future_offset 1 \
+  --learning_rate 3e-4 \
+  --log_dir logs_libero_c_lang
+```
+
 ### Notes
 
 - `--benchmark` can be `libero_spatial`, `libero_object`, `libero_goal`, `libero_10`, `libero_90`.
 - `--camera_key` and `--state_key` must match keys returned by LIBERO env observations.
 - If LIBERO prompts you about config paths, set `--libero_config_path` or run once interactively to create `~/.libero/config.yaml`.
-

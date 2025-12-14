@@ -107,6 +107,8 @@ python -m world_modality.precompute_instruction_embeddings \
 
 Important: rollouts must use the **same** `text_model_name` / `max_length` used here (the training script saves them in the checkpoint meta).
 
+**LIBERO note:** `HuggingFaceVLA/libero` provides `task_index` but does not ship `meta/tasks.jsonl`. You can export a compatible mapping from the LIBERO benchmark via `benchmarks/libero/export_libero_tasks_jsonl.py` (requires LIBERO installed), then pass that JSONL to the command above.
+
 ### 1.3 Train A/B/C/C_no_world_input
 
 All training runs write `config.json` into the `--log_dir`.
