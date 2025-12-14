@@ -43,6 +43,10 @@ def build_model(
     world_vocab_size: int,
     use_language: bool = False,
     lang_dim: int = 0,
+    world_input_scale: float = 1.0,
+    world_input_dropout: float = 0.0,
+    world_input_layernorm: bool = False,
+    block_world_to_action: bool = False,
 ) -> WorldPolicyTransformer:
     return WorldPolicyTransformer(
         model_type=exp_cfg.training.model_type,
@@ -55,6 +59,10 @@ def build_model(
         future_horizon=exp_cfg.data.future_offset,
         use_language=use_language,
         lang_dim=lang_dim,
+        world_input_scale=world_input_scale,
+        world_input_dropout=world_input_dropout,
+        world_input_layernorm=world_input_layernorm,
+        block_world_to_action=block_world_to_action,
     )
 
 

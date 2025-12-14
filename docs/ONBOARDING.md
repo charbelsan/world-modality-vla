@@ -120,6 +120,31 @@ python train_model_c.py    --dataset_name HuggingFaceVLA/libero --cache_dir cach
 python train_model_c.py    --model_type C_no_world_input --dataset_name HuggingFaceVLA/libero --cache_dir cache --log_dir logs_c_no_input ...
 ```
 
+### 1.3b If Model C hurts action quality
+
+In some settings we observe:
+
+- **B / C_no_world_input** improves action MSE (aux future loss helps)
+- **C** improves world-token accuracy but can **hurt** action MSE
+
+This usually means the discrete `w_t` input is acting as a shortcut for world prediction and/or injecting quantization noise into the action path.
+
+Try these knobs (Model C only):
+
+```bash
+--world_input_scale 0.1
+--world_input_dropout 0.5
+--world_input_layernorm
+```
+
+Diagnostic ablation:
+
+```bash
+--block_world_to_action
+```
+
+If `--block_world_to_action` recovers B-like action MSE, you’ve confirmed the degradation comes from ACT queries attending to WORLD_CUR.
+
 ### 1.4 Offline eval + corruption test
 
 ```bash

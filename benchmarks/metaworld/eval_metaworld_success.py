@@ -212,6 +212,10 @@ def main() -> None:
     future_horizon = int(meta.get("future_offset", 1))
     world_vocab_size = int(meta.get("world_vocab_size", 1024))
     lang_dim = int(meta.get("lang_dim", 0))
+    world_input_scale = float(meta.get("world_input_scale", cfg.get("world_input_scale", 1.0)))
+    world_input_dropout = float(meta.get("world_input_dropout", cfg.get("world_input_dropout", 0.0)))
+    world_input_layernorm = bool(meta.get("world_input_layernorm", cfg.get("world_input_layernorm", False)))
+    block_world_to_action = bool(meta.get("block_world_to_action", cfg.get("block_world_to_action", False)))
 
     if state_dim <= 0:
         raise ValueError("Checkpoint missing state_dim; retrain with updated training script.")
@@ -231,6 +235,10 @@ def main() -> None:
         future_horizon=future_horizon,
         use_language=use_language,
         lang_dim=lang_dim if use_language else 0,
+        world_input_scale=world_input_scale,
+        world_input_dropout=world_input_dropout,
+        world_input_layernorm=world_input_layernorm,
+        block_world_to_action=block_world_to_action,
     ).to(device)
     model.load_state_dict(ckpt["model_state_dict"])
     model.eval()

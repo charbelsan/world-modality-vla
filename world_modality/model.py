@@ -34,10 +34,10 @@ class TransformerBackbone(nn.Module):
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=cfg.n_layers)
         self.pos_emb = nn.Parameter(torch.zeros(1, seq_len, cfg.d_model))
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
         # x: [B, L, D]
         x = x + self.pos_emb[:, : x.size(1), :]
-        return self.transformer(x)
+        return self.transformer(x, mask=attn_mask)
 
 
 class WorldPolicyTransformer(nn.Module):
@@ -62,6 +62,10 @@ class WorldPolicyTransformer(nn.Module):
         future_horizon: int,
         use_language: bool = False,
         lang_dim: int = 0,
+        world_input_scale: float = 1.0,
+        world_input_dropout: float = 0.0,
+        world_input_layernorm: bool = False,
+        block_world_to_action: bool = False,
     ):
         super().__init__()
         assert model_type in ("A", "B", "C", "C_no_world_input")
@@ -70,6 +74,10 @@ class WorldPolicyTransformer(nn.Module):
         self.horizon = horizon
         self.future_horizon = future_horizon
         self.use_language = use_language
+        self.world_input_scale = float(world_input_scale)
+        self.world_input_dropout = float(world_input_dropout)
+        self.world_input_layernorm = bool(world_input_layernorm)
+        self.block_world_to_action = bool(block_world_to_action)
 
         d_model = cfg.d_model
 
@@ -150,6 +158,15 @@ class WorldPolicyTransformer(nn.Module):
         if self.model_type == "C":
             assert current_world_token is not None, "Model C requires current_world_token input."
             world_cur = self.emb_world(current_world_token)  # [B, D]
+            if self.world_input_layernorm:
+                world_cur = torch.nn.functional.layer_norm(world_cur, (d_model,))
+            if self.world_input_scale != 1.0:
+                world_cur = world_cur * self.world_input_scale
+            if self.training and self.world_input_dropout > 0:
+                keep = (torch.rand(B, 1, device=world_cur.device) > self.world_input_dropout).to(
+                    dtype=world_cur.dtype
+                )
+                world_cur = world_cur * keep
             world_cur = world_cur.unsqueeze(1)  # [B, 1, D]
             tokens.append(world_cur)
 
@@ -162,7 +179,16 @@ class WorldPolicyTransformer(nn.Module):
         tokens.append(act_q)
 
         x = torch.cat(tokens, dim=1)  # [B, L, D]
-        h = self.backbone(x)
+        attn_mask = None
+        if self.block_world_to_action and self.model_type == "C":
+            # Block ACT_Q positions (targets) from attending to WORLD_CUR (source).
+            L = x.shape[1]
+            act_start = L - self.horizon
+            world_pos = (1 if self.use_language else 0) + 1  # LANG? + OBS
+            mask = torch.zeros((L, L), dtype=torch.bool, device=x.device)
+            mask[act_start : act_start + self.horizon, world_pos] = True
+            attn_mask = mask
+        h = self.backbone(x, attn_mask=attn_mask)
 
         # Readout indices: ACT_Q are always appended last.
         act_start = h.shape[1] - self.horizon

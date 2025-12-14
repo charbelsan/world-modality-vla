@@ -50,6 +50,28 @@ def parse_args() -> argparse.Namespace:
         default=64,
         help="Max token length for the text encoder used in precompute (saved into checkpoint meta).",
     )
+    parser.add_argument(
+        "--world_input_scale",
+        type=float,
+        default=1.0,
+        help="Scale factor applied to WORLD_CUR token embedding (Model C only).",
+    )
+    parser.add_argument(
+        "--world_input_dropout",
+        type=float,
+        default=0.0,
+        help="Dropout probability for WORLD_CUR token embedding (Model C only).",
+    )
+    parser.add_argument(
+        "--world_input_layernorm",
+        action="store_true",
+        help="Apply non-affine LayerNorm to WORLD_CUR embedding (Model C only).",
+    )
+    parser.add_argument(
+        "--block_world_to_action",
+        action="store_true",
+        help="Attention-mask WORLD_CUR so ACT_Q cannot attend to it (diagnostic / ablation).",
+    )
     parser.add_argument("--batch_size", type=int, default=256)
     parser.add_argument("--context_frames", type=int, default=3)
     parser.add_argument("--action_horizon", type=int, default=8)
@@ -112,6 +134,10 @@ def save_config_json(args: argparse.Namespace, log_dir: str):
         "episode_id_key": args.episode_id_key,
         "text_model_name": args.text_model_name,
         "text_max_length": args.text_max_length,
+        "world_input_scale": args.world_input_scale,
+        "world_input_dropout": args.world_input_dropout,
+        "world_input_layernorm": args.world_input_layernorm,
+        "block_world_to_action": args.block_world_to_action,
         "timestamp": datetime.now().isoformat(),
     }
     config_path = os.path.join(log_dir, "config.json")
@@ -205,6 +231,10 @@ def main():
         world_vocab_size=args.world_vocab_size,
         use_language=args.use_language,
         lang_dim=lang_dim,
+        world_input_scale=args.world_input_scale,
+        world_input_dropout=args.world_input_dropout,
+        world_input_layernorm=args.world_input_layernorm,
+        block_world_to_action=args.block_world_to_action,
     ).to(device)
 
     optimizer = AdamW(model.parameters(), lr=training_cfg.learning_rate, weight_decay=1e-4)
@@ -361,6 +391,10 @@ def main():
                 "use_language": args.use_language,
                 "text_model_name": args.text_model_name,
                 "text_max_length": args.text_max_length,
+                "world_input_scale": args.world_input_scale,
+                "world_input_dropout": args.world_input_dropout,
+                "world_input_layernorm": args.world_input_layernorm,
+                "block_world_to_action": args.block_world_to_action,
                 "world_vocab_size": args.world_vocab_size,
                 "model_type": args.model_type,
                 "action_horizon": args.action_horizon,
