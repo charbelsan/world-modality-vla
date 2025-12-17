@@ -1,239 +1,200 @@
-# World Modality Experiments on LeRobot SR100
+# World Modality VLA
 
-This repo implements the "world tokens as a new modality" experiments on the LeRobot SR100 platform.
+Treating world state as a first-class token modality for Vision-Language-Action policies.
 
-Core idea: learn a VLA policy that, in addition to predicting action chunks, also predicts discrete **world tokens** representing future visual states, and (for model C) consumes current world tokens as a first-class input modality.
+## Key Insight
 
-See `REPORT.md` for the hackathon report template and `world_modality/` for code.
+Standard VLAs map observations directly to actions. We add an explicit **world modality** that represents scene state as discrete or continuous tokens. This enables:
+- **Multi-step future prediction**: Model learns what the world *will* look like
+- **Causal reasoning**: Model understands *why* actions lead to outcomes
+- **Better generalization**: World representations transfer across tasks
 
-## 1. Setup
+## Model Architectures
 
-Create a fresh environment on the MI300X VM and install deps:
+| Model | Input | Auxiliary Task | Key Idea |
+|-------|-------|----------------|----------|
+| **A** | Obs, State | None | Baseline BC |
+| **B** | Obs, State | Predict future world tokens | Multi-task learning |
+| **B_cont** | Obs, State | Predict future embeddings | No VQ quantization noise |
+| **C** | Obs, State, World Token | Predict future world tokens | World as input modality |
+| **F** | Obs, State + Prophet memory | Predict future embeddings | External memory via cross-attention |
 
-```bash
-pip install -r requirements.txt
+All models share the same transformer backbone. They differ in:
+- **What goes into the sequence** (C adds world token, F adds predicted future via cross-attention)
+- **What auxiliary task is trained** (discrete tokens vs continuous embeddings)
+
+### Model F Architecture (Best Performing)
+
+```
+Prophet Module:
+  History [B, T_ctx, D] → Future Predictions [B, K_fut, D]
+
+Policy Transformer:
+  Obs + State → Action Queries → GatedCrossAttention(Query, Prophet Output) → Actions
 ```
 
-Verify GPU:
+The gate is initialized to 0 ("do-no-harm"), allowing the model to gradually learn to use future predictions.
+
+## Vision Encoder
+
+We use a **frozen vision encoder** to create frame embeddings:
+- **DINOv2** (default): Widely available, strong semantic features
+- **V-JEPA-v2** (upgrade): Better dynamics priors from video pretraining
+
+The encoder is pluggable via `--vision_model_name`. Both produce embeddings that get quantized into discrete world tokens or used directly as continuous targets.
+
+## Datasets
+
+| Dataset | Description | Link |
+|---------|-------------|------|
+| **LIBERO** | Language-conditioned manipulation | [HuggingFaceVLA/libero](https://huggingface.co/datasets/HuggingFaceVLA/libero) |
+| **MetaWorld MT50** | Multi-task manipulation benchmark | [HuggingFaceVLA/metaworld_mt50](https://huggingface.co/datasets/HuggingFaceVLA/metaworld_mt50) |
+
+## Chain-of-Causality (CoC)
+
+CoC provides textual explanations of robot behavior:
+- **What**: "Robot moves gripper toward red block, then closes gripper to grasp"
+- **Why**: Generated offline using VLMs (Qwen3-VL) on episode keyframes
+- **Purpose**: Interpretability, debugging, and potential cross-embodiment transfer
+
+## Quick Start
 
 ```bash
-# AMD ROCm (optional)
-rocminfo | head || true
+# 1. Install
+pip install -e ".[lerobot]"
 
-# NVIDIA CUDA (smoke test must allocate, not just detect)
-nvidia-smi || true
-python -c "import torch; print(torch.cuda.is_available()); torch.empty(1, device='cuda'); print('cuda alloc ok')"
-```
-
-If `torch.cuda.is_available()` is `True` but the allocation test fails (e.g. OOM on a 1‑element tensor),
-that’s a host NVIDIA driver/GPU state issue (Docker/venvs won’t fix it). Reboot, or reset/restart the driver.
-
-## 2. Recommended first dataset (LIBERO via LeRobot)
-
-The code is designed to work with any `LeRobotDataset`, but a strong first choice is the preprocessed LIBERO dataset:
-
-- Dataset: `HuggingFaceVLA/libero`
-- Suggested keys:
-  - `--image_key observation.images.image`
-  - `--proprio_key observation.state`
-  - `--action_key action`
-
-You can inspect a sample locally to confirm:
-
-```python
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
-ds = LeRobotDataset("HuggingFaceVLA/libero")
-print(ds[0].keys())
-```
-
-Note: LeRobot versions differ on whether `LeRobotDataset` supports `split=...`. This repo assumes the modern API (`LeRobotDataset(name)`), and performs train/val splitting by **episode_id** inside `world_modality/data_sr100.py`.
-
-## 3. Precompute world tokens (embeddings + VQ)
-
-This step builds the vision embedding cache and k-means VQ codebook, then quantizes all frames into discrete world tokens for a given dataset split.
-
-```bash
+# 2. Precompute embeddings and world tokens
 python -m world_modality.precompute_world_tokens \
   --dataset_name HuggingFaceVLA/libero \
-  --split train \
   --image_key observation.images.image \
-  --vision_model_name facebook/dinov2-base \
-  --vq_num_tokens 1024 \
   --cache_dir cache
+
+# 3. Train any model
+python -m world_modality.train --model_type A --max_epochs 5
 ```
 
-Run again with `--split val` if you have a validation split.
+## Full Experiment Commands
 
-Artifacts (per split) under `cache/<dataset_name>/`:
+### Phase 0: Sanity Check (K=1)
 
-- `*_embeddings.fp16.npy` – per-frame pooled vision embeddings `e_t`
-- `*_world_tokens.int.npy` – per-frame discrete world tokens `w_t`
-- `*_codebook_centroids.f32.npy` – VQ centroids for inference-time tokenization
-
-## 4. Train baselines A/B and world-modality model C
-
-All three models share the same transformer backbone; they differ only in sequence layout and whether world tokens are an auxiliary target (B) or an input modality (C).
-
-Baseline A – standard BC (no world tokens):
+Quick verification that training works:
 
 ```bash
-python train_baseline_a.py \
+python -m world_modality.train --model_type A --future_offset 1 --max_epochs 3
+python -m world_modality.train --model_type B --future_offset 1 --max_epochs 3
+```
+
+### Phase 1: Scientific Comparison (K=4)
+
+Compare all model variants:
+
+```bash
+for model in A B B_cont C F; do
+  python -m world_modality.train \
+    --model_type $model \
+    --future_offset 4 \
+    --max_epochs 5 \
+    --log_dir logs/${model}_k4
+done
+```
+
+### Phase 2: Model F Ablations
+
+Test whether Model F actually uses future predictions:
+
+```bash
+# Train Model F
+python -m world_modality.train \
+  --model_type F \
+  --future_offset 4 \
+  --max_epochs 5 \
+  --log_dir logs/F_k4
+
+# Corruption intervention tests
+for mode in shuffle random zero oracle; do
+  python -m world_modality.intervention_corrupt_future \
+    --checkpoint logs/F_k4/model_F_best.pt \
+    --corruption_mode $mode
+done
+```
+
+**Interpretation:**
+- `shuffle/random/zero`: ratio > 1.0 means model relies on future memory
+- `oracle`: ratio < 1.0 means better predictions would improve actions
+
+### Phase 3: Horizon Scaling (K=8)
+
+Test with longer prediction horizon:
+
+```bash
+for model in A B_cont F; do
+  python -m world_modality.train \
+    --model_type $model \
+    --future_offset 8 \
+    --max_epochs 5 \
+    --log_dir logs/${model}_k8
+done
+```
+
+### CoC Generation
+
+Generate Chain-of-Causality labels:
+
+```bash
+python -m coc_vla.coc_generation \
   --dataset_name HuggingFaceVLA/libero \
-  --image_key observation.images.image \
-  --proprio_key observation.state \
-  --action_key action \
-  --cache_dir cache \
-  --batch_size 256 \
-  --context_frames 3 \
-  --action_horizon 8 \
-  --future_offset 8
+  --backend qwen3-vl \
+  --model_name Qwen/Qwen3-VL-8B-Instruct \
+  --output_jsonl coc_outputs/libero_coc.jsonl \
+  --max_episodes 100
 ```
 
-Baseline B – BC + auxiliary future world-token prediction:
+## Project Structure
+
+```
+world_modality/
+  model.py                 # WorldPolicyTransformer, Prophet, GatedCrossAttention
+  train.py                 # Unified training script
+  train_utils.py           # Loss functions, schedulers
+  data_sr100.py            # Data loading with caching
+  precompute_world_tokens.py  # VQ tokenization
+  intervention_corrupt_future.py  # Model F ablation tests
+
+coc_vla/
+  coc_generation.py        # Generate CoC with VLMs
+  model.py                 # Two-head model (actions + CoC)
+  train.py                 # Training with CoC loss
+
+scripts/
+  test_all_models.py       # Verify all model types work
+```
+
+## Verify Installation
 
 ```bash
-python train_baseline_b.py \
-  --dataset_name HuggingFaceVLA/libero \
-  --image_key observation.images.image \
-  --proprio_key observation.state \
-  --action_key action \
-  --cache_dir cache \
-  --batch_size 256 \
-  --context_frames 3 \
-  --action_horizon 8 \
-  --future_offset 8 \
-  --world_vocab_size 1024 \
-  --lambda_world_loss 0.2
+# Test all models on CPU
+python scripts/test_all_models.py --device cpu
+
+# Test on GPU
+python scripts/test_all_models.py --device cuda
 ```
 
-Model C – world-modality (world token as first-class input + future prediction):
+## Environment Options
 
+**uv (fastest):**
 ```bash
-python train_model_c.py \
-  --dataset_name HuggingFaceVLA/libero \
-  --image_key observation.images.image \
-  --proprio_key observation.state \
-  --action_key action \
-  --cache_dir cache \
-  --batch_size 256 \
-  --context_frames 3 \
-  --action_horizon 8 \
-  --future_offset 8 \
-  --world_vocab_size 1024 \
-  --lambda_world_loss 0.2
+uv pip install -e ".[lerobot]"
 ```
 
-During training the script logs:
-
-- training/validation action MSE
-- world-token prediction loss and accuracy (for B/C/C_no_world_input)
-
-Checkpoints are written to `logs/` as `model_<A|B|C>_epoch*.pt` and include minimal metadata for inference.
-
-### 4.1 Extra ablation: C_no_world_input
-
-This isolates “world modality helps” from “aux future loss helps”:
-
+**conda:**
 ```bash
-python train_model_c.py \
-  --model_type C_no_world_input \
-  --dataset_name HuggingFaceVLA/libero \
-  --image_key observation.images.image \
-  --proprio_key observation.state \
-  --action_key action \
-  --cache_dir cache \
-  --batch_size 256 \
-  --context_frames 3 \
-  --action_horizon 8 \
-  --future_offset 8 \
-  --world_vocab_size 1024 \
-  --lambda_world_loss 0.2
+conda env create -f environment.yml
+conda activate world-modality
 ```
 
-## 5. Offline evaluation
-
-For quick offline comparison you can reuse the validation loop by running a short training run (few epochs) and inspecting:
-
-- `[VAL] Epoch ... | action MSE ... | world acc ...`
-
-For more systematic analysis, use:
-
+**Docker:**
 ```bash
-python -m world_modality.eval_offline \
-  --checkpoint logs/model_C_epoch10.pt \
-  --dataset_name HuggingFaceVLA/libero \
-  --split val \
-  --image_key observation.images.image \
-  --proprio_key observation.state \
-  --action_key action \
-  --cache_dir cache
+docker build -t world-modality .
+docker run --gpus all -v $(pwd):/workspace world-modality \
+  python -m world_modality.train --model_type F
 ```
-
-This reports:
-
-- action MSE on the chosen split,
-- world-token Top‑1 and Top‑5 accuracy per prediction horizon k (for models B/C/C_no_world_input).
-
-## 6. Real robot inference on SR100
-
-`world_modality/inference_sr100.py` provides a minimal real-time loop skeleton. It expects:
-
-- a trained checkpoint (`model_C_*.pt` recommended)
-- the VQ centroids file for the same dataset/split
-
-Example:
-
-```bash
-python -m world_modality.inference_sr100 \
-  --checkpoint logs/model_C_epoch10.pt \
-  --codebook_centroids cache/HuggingFaceVLA/libero/train_codebook_centroids.f32.npy \
-  --vision_model_name facebook/dinov2-base \
-  --device auto \
-  --hz 10
-```
-
-Inside the loop you must integrate SR100-specific APIs:
-
-- grab camera frame → numpy / tensor
-- read proprio state vector
-- send the first action in the predicted chunk to the SR100 controller
-
-The script already:
-
-- encodes the current frame to a pooled embedding `e_t`
-- maps `e_t` to a world token `w_t` via the VQ codebook
-- runs the transformer to get actions and predicted future world token
-
-## 7. World-modality intervention test (C vs corrupted world)
-
-To verify that model C actually *uses* the world token modality, you can corrupt the WORLD_CUR input at inference and measure how much action error increases:
-
-```bash
-python -m world_modality.intervention_corrupt_world \
-  --checkpoint logs/model_C_epoch10.pt \
-  --dataset_name HuggingFaceVLA/libero \
-  --split val \
-  --image_key observation.images.image \
-  --proprio_key observation.state \
-  --action_key action \
-  --cache_dir cache
-```
-
-This reports action MSE in the clean vs corrupted setting and their ratio.
-
-## 8. Crash-proofing (VM restarts)
-
-Do not rely on local disk for checkpoints/logs if the VM is unstable.
-
-See `ops/README.md` for Google Drive sync via `rclone`.
-
-## 9. Hackathon report and assets
-
-- Fill `REPORT.md` with:
-  - dataset details and hyperparameters
-  - training curves (export from W&B or logs)
-  - offline metrics and real-robot success table
-  - qualitative notes on stability / drift
-- Save demo videos (camera + predicted future token NN frame + robot) alongside the report.
-
-This is enough for a 48h end-to-end experiment to test “world tokens as a new modality” on SR100.
