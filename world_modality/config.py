@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from typing import Literal, Optional
 
 
-ModelType = Literal["A", "B", "C", "C_no_world_input"]
+ModelType = Literal["A", "B", "B_cont", "C", "C_no_world_input", "F"]
 
 
 @dataclass
@@ -11,6 +11,9 @@ class DataConfig:
     image_key: str = "rgb"
     proprio_key: str = "proprio"
     action_key: str = "action"
+    instruction_key: str = "instruction"
+    episode_id_key: str = "episode_id"
+    use_language: bool = False
     context_frames: int = 3  # T_ctx
     action_horizon: int = 8  # H
     future_offset: int = 8  # K
@@ -20,6 +23,11 @@ class DataConfig:
     batch_size: int = 256
     cache_dir: str = "cache"
     max_train_steps: Optional[int] = None
+    preload_to_gpu: bool = False
+
+
+# Alias for backward compatibility with Phase-2 code
+DatasetConfig = DataConfig
 
 
 @dataclass

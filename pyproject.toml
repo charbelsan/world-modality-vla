@@ -1,0 +1,83 @@
+[project]
+name = "world-modality-vla"
+version = "0.2.0"
+description = "World tokens as first-class modality for Vision-Language-Action (VLA) policies"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "Charbel", email = "charbel@example.com"},
+]
+keywords = ["robotics", "vla", "world-model", "imitation-learning", "transformer"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "torch>=2.0",
+    "torchvision",
+    "torchaudio",
+    "transformers>=4.40",
+    "accelerate",
+    "datasets",
+    "huggingface_hub",
+    "safetensors",
+    "faiss-cpu",
+    "scikit-learn",
+    "numpy",
+    "tqdm",
+    "pillow",
+    "opencv-python",
+    "wandb",
+    "einops",
+    "pyyaml",
+    "matplotlib",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-cov",
+    "ruff",
+    "mypy",
+    "black",
+]
+lerobot = [
+    "lerobot @ git+https://github.com/huggingface/lerobot.git",
+]
+
+[project.urls]
+Homepage = "https://github.com/charbel/world-modality-vla"
+Documentation = "https://github.com/charbel/world-modality-vla#readme"
+Repository = "https://github.com/charbel/world-modality-vla"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["world_modality", "coc_vla"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+ignore = ["E501"]  # Line length handled separately
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true
+warn_return_any = true
+warn_unused_configs = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-v --tb=short"

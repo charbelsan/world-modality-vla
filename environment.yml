@@ -1,0 +1,30 @@
+name: world-vla
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - pytorch>=2.0
+  - torchvision
+  - torchaudio
+  - pytorch-cuda=12.1
+  - numpy
+  - scikit-learn
+  - tqdm
+  - pillow
+  - matplotlib
+  - pip
+  - pip:
+    - transformers>=4.40
+    - accelerate
+    - datasets
+    - huggingface_hub
+    - safetensors
+    - lerobot @ git+https://github.com/huggingface/lerobot.git
+    - faiss-cpu
+    - opencv-python
+    - wandb
+    - einops
+    - pyyaml
