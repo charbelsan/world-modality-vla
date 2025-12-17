@@ -140,6 +140,34 @@ def compute_world_cosine(
     return float(cos.mean().cpu().item())
 
 
+@torch.no_grad()
+def compute_world_cosine_per_step(
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    eps: float = 1e-8,
+) -> list[float]:
+    """Compute cosine similarity per horizon step.
+
+    This diagnostic shows if Prophet accuracy degrades for distant future steps.
+    If step 1 is good but step K collapses, we know the horizon is too long.
+
+    Args:
+        pred: [B, K, D] predicted future embeddings
+        target: [B, K, D] ground truth future embeddings
+
+    Returns:
+        List of K floats, one cosine similarity per step [step_1, step_2, ..., step_K]
+    """
+    pred_f = pred.float()
+    tgt_f = target.float()
+    pred_n = pred_f / (pred_f.norm(dim=-1, keepdim=True).clamp_min(eps))
+    tgt_n = tgt_f / (tgt_f.norm(dim=-1, keepdim=True).clamp_min(eps))
+    cos = (pred_n * tgt_n).sum(dim=-1)  # [B, K]
+    # Average over batch, return per-step
+    cos_per_step = cos.mean(dim=0)  # [K]
+    return [float(c.cpu().item()) for c in cos_per_step]
+
+
 def get_linear_warmup_scheduler(optimizer, warmup_steps: int, total_steps: int):
     """Create a linear warmup scheduler.
 

@@ -8,6 +8,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from world_modality.config import DataConfig, TransformerConfig
+from world_modality.device import resolve_device
 from coc_vla.data import CoCSR100Dataset
 from coc_vla.model import WorldCoCTransformer
 from world_modality.train_utils import compute_action_loss, compute_world_loss
@@ -24,13 +25,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cache_dir", type=str, default="cache")
     parser.add_argument("--batch_size", type=int, default=256)
     parser.add_argument("--num_workers", type=int, default=8)
-    parser.add_argument("--device", type=str, default="cuda")
+    parser.add_argument("--device", type=str, default="auto", choices=["auto", "cpu", "cuda"])
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
-    device = torch.device(args.device if torch.cuda.is_available() else "cpu")
+    device = resolve_device(args.device)
 
     ckpt = torch.load(args.checkpoint, map_location=device)
     cfg = ckpt["config"]
@@ -123,4 +124,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

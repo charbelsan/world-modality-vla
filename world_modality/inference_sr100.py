@@ -8,6 +8,7 @@ import numpy as np
 import torch
 
 from .config import DataConfig, TransformerConfig, VisionConfig, VQConfig
+from .device import resolve_device
 from .model import WorldPolicyTransformer
 from .vision import VisionEncoder
 from .vq import VQCodebook
@@ -19,7 +20,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--world_vocab_size", type=int, default=1024)
     parser.add_argument("--codebook_centroids", type=str, default="", help="Path to VQ centroids .npy file.")
     parser.add_argument("--vision_model_name", type=str, default="facebook/dinov2-base")
-    parser.add_argument("--device", type=str, default="cuda")
+    parser.add_argument("--device", type=str, default="auto", choices=["auto", "cpu", "cuda"])
     parser.add_argument("--hz", type=float, default=10.0, help="Control frequency.")
     return parser.parse_args()
 
@@ -31,7 +32,7 @@ def load_codebook(centroids_path: str) -> VQCodebook:
 
 def main():
     args = parse_args()
-    device = torch.device(args.device if torch.cuda.is_available() else "cpu")
+    device = resolve_device(args.device)
 
     ckpt = torch.load(args.checkpoint, map_location=device)
     model_cfg = ckpt["config"]

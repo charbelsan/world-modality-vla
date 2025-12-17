@@ -11,6 +11,8 @@ import torch
 from PIL import Image
 from tqdm import tqdm
 
+from world_modality.device import resolve_device
+
 
 try:
     # Newer LeRobot
@@ -39,7 +41,7 @@ def parse_args() -> argparse.Namespace:
         choices=["qwen3-vl", "qwen2.5-vl", "auto"],
         help="Which transformers backend to use.",
     )
-    parser.add_argument("--device", type=str, default="cuda")
+    parser.add_argument("--device", type=str, default="auto", choices=["auto", "cpu", "cuda"])
     parser.add_argument("--seed", type=int, default=0, help="Random seed (used for sampling-based generation).")
     parser.add_argument("--max_episodes", type=int, default=0, help="0 means no limit.")
     parser.add_argument("--prompt_file", type=str, default="", help="Optional prompt template file.")
@@ -167,7 +169,7 @@ class VlmClient:
 def load_vlm(model_name: str, backend: str, device: str) -> VlmClient:
     from transformers import AutoProcessor
 
-    torch_device = torch.device(device if torch.cuda.is_available() else "cpu")
+    torch_device = resolve_device(device)
     # Prefer bf16 when supported; otherwise fallback to fp16 for CUDA.
     if torch_device.type == "cuda":
         torch_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16

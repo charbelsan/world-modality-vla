@@ -14,6 +14,7 @@ from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.data import DataLoader
 
 from world_modality.config import DataConfig, TransformerConfig
+from world_modality.device import resolve_device
 from world_modality.train_utils import (
     compute_action_loss,
     compute_world_loss,
@@ -42,7 +43,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--alpha_coc_loss", type=float, default=0.2)
     parser.add_argument("--warmup_steps", type=int, default=0)
     parser.add_argument("--gradient_clip", type=float, default=1.0)
-    parser.add_argument("--device", type=str, default="cuda")
+    parser.add_argument("--device", type=str, default="auto", choices=["auto", "cpu", "cuda"])
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--log_dir", type=str, default="logs_coc")
     parser.add_argument("--num_workers", type=int, default=8)
@@ -140,7 +141,7 @@ def make_collate_with_coc(tokenizer, max_len: int):
 def main():
     args = parse_args()
 
-    device = torch.device(args.device if torch.cuda.is_available() else "cpu")
+    device = resolve_device(args.device)
     set_seed(args.seed)
 
     from transformers import AutoTokenizer

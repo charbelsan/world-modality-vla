@@ -4,6 +4,8 @@ import torch
 from PIL import Image
 from transformers import AutoImageProcessor, AutoModel
 
+from .device import resolve_device
+
 
 class VisionEncoder(torch.nn.Module):
     """
@@ -13,9 +15,9 @@ class VisionEncoder(torch.nn.Module):
     of shape [B, d_e].
     """
 
-    def __init__(self, model_name: str = "facebook/dinov2-base", device: str = "cuda"):
+    def __init__(self, model_name: str = "facebook/dinov2-base", device: str = "auto"):
         super().__init__()
-        self.device = torch.device(device if torch.cuda.is_available() else "cpu")
+        self.device = resolve_device(device)
         self.processor = AutoImageProcessor.from_pretrained(model_name)
         self.backbone = AutoModel.from_pretrained(model_name)
         self.backbone.eval().to(self.device)
@@ -47,4 +49,3 @@ class VisionEncoder(torch.nn.Module):
             pooled = outputs.last_hidden_state[:, 0]
 
         return pooled
-

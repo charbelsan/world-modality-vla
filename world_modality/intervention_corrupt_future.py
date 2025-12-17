@@ -6,6 +6,7 @@ import torch
 
 from .config import DatasetConfig, TransformerConfig
 from .data_sr100 import get_dataloaders
+from .device import resolve_device
 from .model import Prophet, WorldPolicyTransformer
 
 
@@ -14,6 +15,7 @@ def parse_args():
     p.add_argument("--checkpoint", type=str, required=True)
     p.add_argument("--dataset_name", type=str, default="HuggingFaceVLA/libero")
     p.add_argument("--batch_size", type=int, default=512)
+    p.add_argument("--device", type=str, default="auto", choices=["auto", "cpu", "cuda"])
     p.add_argument(
         "--corruption_mode",
         type=str,
@@ -88,7 +90,7 @@ def eval_clean_and_corrupt(
 
 def main():
     args = parse_args()
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = resolve_device(args.device)
     print(f"Using device: {device}")
 
     ckpt = torch.load(args.checkpoint, map_location="cpu")
@@ -109,7 +111,7 @@ def main():
         action_horizon=action_horizon,
         future_offset=future_offset,
         use_language=False,
-        preload_to_gpu=True,
+        preload_to_gpu=(device.type == "cuda"),
     )
 
     transformer_cfg = TransformerConfig(
@@ -155,6 +157,15 @@ def main():
         raise ValueError("Checkpoint is missing prophet_state_dict.")
     prophet.load_state_dict(ckpt["prophet_state_dict"], strict=True)
 
+    # Log gate value
+    gate_val = model.get_gate_value()
+    print(f"\n=== Model F Intervention Test ===")
+    print(f"Checkpoint: {args.checkpoint}")
+    print(f"Gate value: tanh(gate) = {gate_val:.4f}")
+    if gate_val is not None and abs(gate_val) < 0.01:
+        print("  WARNING: Gate ~0 means model may be ignoring future memory!")
+    print()
+
     clean, corrupt, ratio = eval_clean_and_corrupt(
         model=model,
         prophet=prophet,
@@ -167,6 +178,23 @@ def main():
     print(f"Clean (predicted) action MSE:   {clean:.6f}")
     print(f"Corrupt ({args.corruption_mode}) action MSE: {corrupt:.6f}")
     print(f"Corruption ratio (corrupt/clean): {ratio:.4f}")
+    print()
+
+    # Interpretation
+    if args.corruption_mode == "oracle":
+        if ratio < 1.0:
+            print(f"✓ Oracle improves over predicted (ratio={ratio:.3f} < 1.0)")
+            print("  → Better future predictions would improve actions.")
+        else:
+            print(f"✗ Oracle doesn't help (ratio={ratio:.3f} >= 1.0)")
+            print("  → Model may not be using future memory effectively.")
+    else:
+        if ratio > 1.0:
+            print(f"✓ Corruption degrades performance (ratio={ratio:.3f} > 1.0)")
+            print(f"  → Model causally relies on future memory.")
+        else:
+            print(f"✗ Corruption doesn't hurt (ratio={ratio:.3f} <= 1.0)")
+            print("  → Model may be ignoring future memory.")
 
 
 if __name__ == "__main__":

@@ -10,10 +10,12 @@ from torch.optim import AdamW
 
 from .config import DatasetConfig, ModelType, TrainingConfig, TransformerConfig
 from .data_sr100 import get_dataloaders
+from .device import resolve_device
 from .model import Prophet, WorldPolicyTransformer
 from .train_utils import (
     compute_action_loss,
     compute_world_cosine,
+    compute_world_cosine_per_step,
     compute_world_loss,
     compute_world_loss_continuous,
     get_linear_warmup_scheduler,
@@ -69,6 +71,7 @@ def parse_args():
     p.add_argument("--action_horizon", type=int, default=8)
     p.add_argument("--future_offset", type=int, default=8)
     p.add_argument("--log_dir", type=str, default="logs")
+    p.add_argument("--device", type=str, default="auto", choices=["auto", "cpu", "cuda"])
 
     # Optional language conditioning.
     p.add_argument("--use_language", action="store_true")
@@ -107,7 +110,7 @@ def main():
     args = parse_args()
     os.makedirs(args.log_dir, exist_ok=True)
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = resolve_device(args.device)
     print(f"Using device: {device}")
 
     model_type: ModelType = args.model_type  # type: ignore
@@ -120,7 +123,7 @@ def main():
         use_language=args.use_language,
         text_model_name=args.text_model_name,
         text_max_length=args.text_max_length,
-        preload_to_gpu=True,
+        preload_to_gpu=(device.type == "cuda"),
     )
 
     transformer_cfg = TransformerConfig(
@@ -327,6 +330,7 @@ def main():
 
         val_action_losses = []
         val_world_metrics = []
+        val_prophet_per_step = []  # For Model F: per-step cosine diagnostic
         with torch.no_grad():
             for batch in val_loader:
                 actions_gt = batch["actions"].to(device).float()
@@ -382,6 +386,7 @@ def main():
                 elif model_type == "F":
                     assert prophet is not None
                     val_world_metrics.append(compute_world_cosine(prophet_pred, future_emb))
+                    val_prophet_per_step.append(compute_world_cosine_per_step(prophet_pred, future_emb))
 
         mean_val_act = sum(val_action_losses) / max(len(val_action_losses), 1)
         mean_val_world = sum(val_world_metrics) / max(len(val_world_metrics), 1) if val_world_metrics else 0.0
@@ -391,16 +396,29 @@ def main():
         else:
             print(f"[VAL] Epoch {epoch} | action MSE {mean_val_act:.4f} | world cos {mean_val_world:.4f}", flush=True)
 
+        # Log per-step Prophet cosine (diagnostic for Model F)
+        if model_type == "F" and val_prophet_per_step:
+            import numpy as np
+            per_step_arr = np.array(val_prophet_per_step)  # [num_batches, K]
+            mean_per_step = per_step_arr.mean(axis=0)  # [K]
+            step_str = " | ".join([f"k{i+1}={v:.3f}" for i, v in enumerate(mean_per_step)])
+            print(f"[VAL] Prophet per-step cosine: {step_str}", flush=True)
+
         if training_cfg.log_wandb:
             import wandb
 
-            wandb.log(
-                {
-                    "val/action_mse": mean_val_act,
-                    "val/world_metric": mean_val_world,
-                },
-                step=global_step,
-            )
+            log_dict = {
+                "val/action_mse": mean_val_act,
+                "val/world_metric": mean_val_world,
+            }
+            # Add per-step Prophet cosine for Model F
+            if model_type == "F" and val_prophet_per_step:
+                import numpy as np
+                per_step_arr = np.array(val_prophet_per_step)
+                mean_per_step = per_step_arr.mean(axis=0)
+                for i, v in enumerate(mean_per_step):
+                    log_dict[f"val/prophet_cos_k{i+1}"] = v
+            wandb.log(log_dict, step=global_step)
 
         # Save checkpoint per epoch
         ckpt_path = os.path.join(args.log_dir, f"model_{args.model_type}_epoch{epoch}.pt")

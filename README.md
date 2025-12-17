@@ -14,12 +14,19 @@ Create a fresh environment on the MI300X VM and install deps:
 pip install -r requirements.txt
 ```
 
-Verify ROCm / GPU:
+Verify GPU:
 
 ```bash
-rocminfo | head
-python -c "import torch; print(torch.cuda.is_available()); print(torch.cuda.get_device_name(0))"
+# AMD ROCm (optional)
+rocminfo | head || true
+
+# NVIDIA CUDA (smoke test must allocate, not just detect)
+nvidia-smi || true
+python -c "import torch; print(torch.cuda.is_available()); torch.empty(1, device='cuda'); print('cuda alloc ok')"
 ```
+
+If `torch.cuda.is_available()` is `True` but the allocation test fails (e.g. OOM on a 1‑element tensor),
+that’s a host NVIDIA driver/GPU state issue (Docker/venvs won’t fix it). Reboot, or reset/restart the driver.
 
 ## 2. Recommended first dataset (LIBERO via LeRobot)
 
@@ -181,7 +188,7 @@ python -m world_modality.inference_sr100 \
   --checkpoint logs/model_C_epoch10.pt \
   --codebook_centroids cache/HuggingFaceVLA/libero/train_codebook_centroids.f32.npy \
   --vision_model_name facebook/dinov2-base \
-  --device cuda \
+  --device auto \
   --hz 10
 ```
 

@@ -33,7 +33,7 @@ DatasetConfig = DataConfig
 @dataclass
 class VisionConfig:
     model_name: str = "facebook/dinov2-base"
-    device: str = "cuda"
+    device: str = "auto"
     dtype: str = "float16"
 
 

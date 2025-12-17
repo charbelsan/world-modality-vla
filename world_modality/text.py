@@ -6,12 +6,14 @@ from typing import List, Optional
 import torch
 from transformers import AutoModel, AutoTokenizer
 
+from .device import resolve_device
+
 
 @dataclass
 class TextEncoderConfig:
     model_name: str = "distilbert-base-uncased"
     max_length: int = 64
-    device: str = "cuda"
+    device: str = "auto"
     dtype: str = "float16"
 
 
@@ -23,7 +25,7 @@ class TextEncoder(torch.nn.Module):
     def __init__(self, cfg: TextEncoderConfig):
         super().__init__()
         self.cfg = cfg
-        self.device = torch.device(cfg.device if torch.cuda.is_available() else "cpu")
+        self.device = resolve_device(cfg.device)
         self.tokenizer = AutoTokenizer.from_pretrained(cfg.model_name, use_fast=True)
         self.backbone = AutoModel.from_pretrained(cfg.model_name)
         self.backbone.eval().to(self.device)

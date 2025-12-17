@@ -11,6 +11,7 @@ from tqdm import tqdm
 
 from .config import DataConfig, VisionConfig, VQConfig
 from .data_sr100 import build_cache_paths
+from .device import resolve_device
 from .vision import VisionEncoder
 from .vq import VQCodebook
 
@@ -46,7 +47,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--vq_batch_size", type=int, default=4096)
     parser.add_argument("--vq_random_state", type=int, default=0, help="Random seed for k-means init.")
     parser.add_argument("--vision_model_name", type=str, default="facebook/dinov2-base")
-    parser.add_argument("--device", type=str, default="cuda")
+    parser.add_argument("--device", type=str, default="auto", choices=["auto", "cpu", "cuda"])
     parser.add_argument("--l2_normalize", action="store_true", help="L2-normalize embeddings before k-means + assignment.")
     return parser.parse_args()
 
@@ -66,18 +67,14 @@ def main():
         kmeans_batch_size=args.vq_batch_size,
     )
 
-    # Underlying LeRobot dataset: iterate over all timesteps in this split.
-    if torch.cuda.is_available() and "cuda" not in vision_cfg.device:
-        device = "cuda"
-    else:
-        device = vision_cfg.device
+    device = resolve_device(vision_cfg.device)
 
     from lerobot.datasets.lerobot_dataset import LeRobotDataset  # type: ignore
 
     ds = LeRobotDataset(data_cfg.dataset_name)
     cache_paths = build_cache_paths(data_cfg, args.split)
 
-    encoder = VisionEncoder(vision_cfg.model_name, device=device)
+    encoder = VisionEncoder(vision_cfg.model_name, device=str(device))
     encoder.eval()
 
     # Wrap dataset for parallel loading
