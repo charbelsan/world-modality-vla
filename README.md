@@ -78,6 +78,7 @@ python -m world_modality.train --model_type A --max_epochs 5
 This is the "generalist VLM + action head + Model-F world memory" pipeline.
 Model F+ adds CoC text loss (optional) and a FLARE-style future latent alignment loss.
 See `docs/LLM_VLA_FPLUS.md` for the full experiment matrix and launch script.
+See `docs/L40S_RUNBOOK.md` for a zero-ambiguity L40S setup.
 
 Quick run on L40S:
 ```bash

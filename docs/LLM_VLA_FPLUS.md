@@ -77,6 +77,7 @@ Expected:
 
 ### Quick launch
 Use `scripts/run_fplus_experiments.sh` to run all experiments sequentially on L40S.
+For a zero-ambiguity setup, see `docs/L40S_RUNBOOK.md`.
 
 Environment variables (optional):
 - DATASET, IMAGE_KEY, INSTRUCTION_KEY, CACHE_DIR
