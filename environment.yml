@@ -20,6 +20,7 @@ dependencies:
     - transformers>=4.40
     - accelerate
     - datasets
+    - peft
     - huggingface_hub
     - safetensors
     - lerobot @ git+https://github.com/huggingface/lerobot.git

@@ -73,6 +73,81 @@ python -m world_modality.precompute_world_tokens \
 python -m world_modality.train --model_type A --max_epochs 5
 ```
 
+## Qwen VLM + World Modality (Model F+)
+
+This is the "generalist VLM + action head + Model-F world memory" pipeline.
+Model F+ adds CoC text loss (optional) and a FLARE-style future latent alignment loss.
+See `docs/LLM_VLA_FPLUS.md` for the full experiment matrix and launch script.
+
+Quick run on L40S:
+```bash
+export COC_JSONL=/path/to/coc_labels.jsonl
+scripts/run_fplus_experiments.sh
+```
+
+Precompute continuous world latents (DINO or V-JEPA):
+
+```bash
+python -m world_modality.precompute_world_latents \
+  --dataset_name HuggingFaceVLA/libero \
+  --image_key observation.images.image \
+  --world_latents_source dino \
+  --cache_dir cache
+```
+
+E0 (VLM-BC baseline):
+
+```bash
+python -m world_modality.train_llm_vla \
+  --vlm_backbone qwen3_vl_3b_instruct \
+  --trust_remote_code \
+  --dataset_name HuggingFaceVLA/libero \
+  --image_key observation.images.image \
+  --instruction_key instruction \
+  --world_latents_source dino \
+  --future_memory_source predicted \
+  --disable_future_injection \
+  --lambda_world 0.0
+```
+
+E2 (Model-F world memory injection):
+
+```bash
+python -m world_modality.train_llm_vla \
+  --vlm_backbone qwen3_vl_3b_instruct \
+  --trust_remote_code \
+  --dataset_name HuggingFaceVLA/libero \
+  --image_key observation.images.image \
+  --instruction_key instruction \
+  --world_latents_source dino \
+  --future_memory_source scheduled \
+  --lambda_world 0.2
+```
+
+Notes:
+- Use `--freeze_backbone --use_lora` for LoRA tuning.
+- Switch to `--world_latents_source vjepa` once V-JEPA latents are available.
+- Action decoding uses `<ACT_i>` tokens and reads hidden states (no text decoding).
+
+### Phase 2: Talk while acting (CoC loss)
+
+This keeps control independent: actions are computed from <ACT> hidden states, and language
+loss is computed in a separate forward pass.
+
+```bash
+python -m world_modality.train_llm_vla \
+  --vlm_backbone qwen3_vl_3b_instruct \
+  --trust_remote_code \
+  --dataset_name HuggingFaceVLA/libero \
+  --image_key observation.images.image \
+  --instruction_key instruction \
+  --world_latents_source dino \
+  --future_memory_source scheduled \
+  --lambda_world 0.2 \
+  --lambda_text 0.1 \
+  --coc_jsonl /path/to/coc_labels.jsonl
+```
+
 ## Full Experiment Commands
 
 ### Phase 0: Sanity Check (K=1)

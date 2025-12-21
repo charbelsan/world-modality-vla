@@ -32,7 +32,7 @@ DatasetConfig = DataConfig
 
 @dataclass
 class VisionConfig:
-    model_name: str = "facebook/dinov2-base"
+    model_name: str = "facebook/vjepa2-vitg-fpc64-256"  # 1B V-JEPA-v2 for video-native embeddings
     device: str = "auto"
     dtype: str = "float16"
 

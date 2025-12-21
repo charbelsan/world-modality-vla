@@ -46,7 +46,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--vq_sample_frames", type=int, default=200_000)
     parser.add_argument("--vq_batch_size", type=int, default=4096)
     parser.add_argument("--vq_random_state", type=int, default=0, help="Random seed for k-means init.")
-    parser.add_argument("--vision_model_name", type=str, default="facebook/dinov2-base")
+    parser.add_argument("--vision_model_name", type=str, default="facebook/vjepa2-vitg-fpc64-256")
     parser.add_argument("--device", type=str, default="auto", choices=["auto", "cpu", "cuda"])
     parser.add_argument("--l2_normalize", action="store_true", help="L2-normalize embeddings before k-means + assignment.")
     return parser.parse_args()
