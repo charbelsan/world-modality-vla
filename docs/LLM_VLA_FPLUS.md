@@ -40,7 +40,7 @@ shortcuts). If you want to explore Alpamayo‑style coupling later, do it as an
 explicit ablation (e.g., generate reasoning first, then act), not as the default.
 
 Reference:
-- Alpamayo‑R1 (NVIDIA, 2025): arXiv:2509.19232
+- Alpamayo‑R1 (NVIDIA, 2025): arXiv:2511.00088
 
 ### Losses
 - L_action: MSE on action chunk.
