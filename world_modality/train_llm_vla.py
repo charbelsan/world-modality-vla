@@ -71,6 +71,20 @@ def parse_args() -> argparse.Namespace:
              "This makes prediction non-trivial when cos(z_t, z_{t+k}) is high.",
     )
     p.add_argument("--coc_jsonl", type=str, default="")
+    p.add_argument(
+        "--require_coc",
+        action="store_true",
+        help="If set (and --lambda_text > 0), drop episodes without CoC labels. "
+        "Otherwise, text loss is skipped for samples with missing CoC.",
+    )
+    p.add_argument(
+        "--text_loss_mode",
+        type=str,
+        default="joint_after_act",
+        choices=["joint_after_act", "separate"],
+        help="How to compute CoC text loss. joint_after_act uses a single forward pass where CoC tokens come after <ACT>; "
+        "separate runs an independent forward pass for CoC loss.",
+    )
     p.add_argument("--scheduled_sampling_start", type=float, default=0.9)
     p.add_argument("--scheduled_sampling_end", type=float, default=0.1)
 
@@ -195,39 +209,111 @@ def build_dataloaders(args, processor, act_tokens: List[str], use_text_loss: boo
         split="train",
         world_latents_source=args.world_latents_source,
         coc_jsonl=args.coc_jsonl if use_text_loss else None,
+        require_coc=bool(use_text_loss and args.require_coc),
     )
     val_ds = LiberoVLADataset(
         cfg,
         split="val",
         world_latents_source=args.world_latents_source,
         coc_jsonl=args.coc_jsonl if use_text_loss else None,
+        require_coc=bool(use_text_loss and args.require_coc),
     )
 
     act_token_ids = processor.tokenizer.convert_tokens_to_ids(act_tokens)
 
     def collate(batch: List[Dict]) -> Dict[str, torch.Tensor]:
         images = [b["image"] for b in batch]
+        if use_text_loss and args.text_loss_mode == "joint_after_act":
+            base_texts = [
+                build_prompt(b["instruction"], act_tokens, use_chat_template=use_chat_template) for b in batch
+            ]
+            coc_prefix_texts = [f"{p}\nExplain the action sequence:" for p in base_texts]
+            coc_texts = [b.get("coc_text", "") for b in batch]
+            full_texts = [
+                f"{pref} {t}".strip() if t else pref for pref, t in zip(coc_prefix_texts, coc_texts)
+            ]
 
-        if use_chat_template:
-            # For Qwen2.5-VL: use chat template format
-            prompts = []
-            for b in batch:
-                text_content = build_prompt(b["instruction"], act_tokens, use_chat_template=True)
-                messages = [{"role": "user", "content": [{"type": "image"}, {"type": "text", "text": text_content}]}]
-                prompt = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-                prompts.append(prompt)
+            if use_chat_template:
+                prompts = []
+                prefix_prompts = []
+                for full_text, prefix_text in zip(full_texts, coc_prefix_texts):
+                    messages = [
+                        {
+                            "role": "user",
+                            "content": [{"type": "image"}, {"type": "text", "text": full_text}],
+                        }
+                    ]
+                    prompts.append(
+                        processor.apply_chat_template(
+                            messages, tokenize=False, add_generation_prompt=True
+                        )
+                    )
+                    prefix_messages = [
+                        {
+                            "role": "user",
+                            "content": [{"type": "image"}, {"type": "text", "text": prefix_text}],
+                        }
+                    ]
+                    prefix_prompts.append(
+                        processor.apply_chat_template(
+                            prefix_messages, tokenize=False, add_generation_prompt=True
+                        )
+                    )
+            else:
+                prompts = full_texts
+                prefix_prompts = coc_prefix_texts
+
+            model_inputs = processor(
+                text=prompts,
+                images=images,
+                padding=True,
+                truncation=True,
+                max_length=args.max_length,
+                return_tensors="pt",
+            )
+            prefix_inputs = processor(
+                text=prefix_prompts,
+                images=images,
+                padding=True,
+                truncation=True,
+                max_length=args.max_length,
+                return_tensors="pt",
+            )
+            labels = model_inputs["input_ids"].clone()
+            labels[model_inputs["attention_mask"] == 0] = -100
+            for i in range(labels.size(0)):
+                prefix_len = int(prefix_inputs["attention_mask"][i].sum())
+                labels[i, :prefix_len] = -100
         else:
-            # For Qwen3-VL: use <image> placeholder
-            prompts = [build_prompt(b["instruction"], act_tokens, use_chat_template=False) for b in batch]
+            if use_chat_template:
+                prompts = []
+                for b in batch:
+                    text_content = build_prompt(b["instruction"], act_tokens, use_chat_template=True)
+                    messages = [
+                        {
+                            "role": "user",
+                            "content": [{"type": "image"}, {"type": "text", "text": text_content}],
+                        }
+                    ]
+                    prompts.append(
+                        processor.apply_chat_template(
+                            messages, tokenize=False, add_generation_prompt=True
+                        )
+                    )
+            else:
+                prompts = [
+                    build_prompt(b["instruction"], act_tokens, use_chat_template=False) for b in batch
+                ]
 
-        model_inputs = processor(
-            text=prompts,
-            images=images,
-            padding=True,
-            truncation=True,
-            max_length=args.max_length,
-            return_tensors="pt",
-        )
+            model_inputs = processor(
+                text=prompts,
+                images=images,
+                padding=True,
+                truncation=True,
+                max_length=args.max_length,
+                return_tensors="pt",
+            )
+            labels = None
         act_positions = find_act_positions(model_inputs["input_ids"], act_token_ids)
         actions = torch.stack([b["actions"] for b in batch], dim=0)
         z_hist = torch.stack([b["z_hist"] for b in batch], dim=0)
@@ -240,46 +326,67 @@ def build_dataloaders(args, processor, act_tokens: List[str], use_text_loss: boo
             "z_future": z_future,
         }
         if use_text_loss:
-            coc_texts = [b.get("coc_text", "") for b in batch]
-            if use_chat_template:
-                # For Qwen2.5-VL: use chat template format for CoC
-                full_texts = []
-                text_prompts = []
-                for b, coc in zip(batch, coc_texts):
-                    prompt_text = build_coc_prompt(b["instruction"], use_chat_template=True)
-                    full_text = f"{prompt_text} {coc}" if coc else prompt_text
-                    messages = [{"role": "user", "content": [{"type": "image"}, {"type": "text", "text": full_text}]}]
-                    full_texts.append(processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True))
-                    # For prefix (prompt only)
-                    prefix_messages = [{"role": "user", "content": [{"type": "image"}, {"type": "text", "text": prompt_text}]}]
-                    text_prompts.append(processor.apply_chat_template(prefix_messages, tokenize=False, add_generation_prompt=True))
+            if args.text_loss_mode == "joint_after_act":
+                out["text_labels"] = labels
             else:
-                text_prompts = [build_coc_prompt(b["instruction"], use_chat_template=False) for b in batch]
-                full_texts = [f"{p} {t}" if t else p for p, t in zip(text_prompts, coc_texts)]
-
-            text_inputs = processor(
-                text=full_texts,
-                images=images,
-                padding=True,
-                truncation=True,
-                max_length=args.max_length,
-                return_tensors="pt",
-            )
-            # Mask prompt tokens.
-            prefix_inputs = processor(
-                text=text_prompts,
-                images=images,
-                padding=True,
-                truncation=True,
-                max_length=args.max_length,
-                return_tensors="pt",
-            )
-            labels = text_inputs["input_ids"].clone()
-            for i in range(labels.size(0)):
-                prefix_len = int(prefix_inputs["input_ids"][i].ne(processor.tokenizer.pad_token_id).sum())
-                labels[i, :prefix_len] = -100
-            out["text_inputs"] = text_inputs
-            out["text_labels"] = labels
+                coc_texts = [b.get("coc_text", "") for b in batch]
+                if use_chat_template:
+                    full_texts = []
+                    text_prompts = []
+                    for b, coc in zip(batch, coc_texts):
+                        prompt_text = build_coc_prompt(b["instruction"], use_chat_template=True)
+                        full_text = f"{prompt_text} {coc}" if coc else prompt_text
+                        messages = [
+                            {
+                                "role": "user",
+                                "content": [{"type": "image"}, {"type": "text", "text": full_text}],
+                            }
+                        ]
+                        full_texts.append(
+                            processor.apply_chat_template(
+                                messages, tokenize=False, add_generation_prompt=True
+                            )
+                        )
+                        prefix_messages = [
+                            {
+                                "role": "user",
+                                "content": [{"type": "image"}, {"type": "text", "text": prompt_text}],
+                            }
+                        ]
+                        text_prompts.append(
+                            processor.apply_chat_template(
+                                prefix_messages, tokenize=False, add_generation_prompt=True
+                            )
+                        )
+                else:
+                    text_prompts = [
+                        build_coc_prompt(b["instruction"], use_chat_template=False) for b in batch
+                    ]
+                    full_texts = [f"{p} {t}" if t else p for p, t in zip(text_prompts, coc_texts)]
+                text_inputs = processor(
+                    text=full_texts,
+                    images=images,
+                    padding=True,
+                    truncation=True,
+                    max_length=args.max_length,
+                    return_tensors="pt",
+                )
+                # Mask prompt tokens.
+                prefix_inputs = processor(
+                    text=text_prompts,
+                    images=images,
+                    padding=True,
+                    truncation=True,
+                    max_length=args.max_length,
+                    return_tensors="pt",
+                )
+                text_labels = text_inputs["input_ids"].clone()
+                text_labels[text_inputs["attention_mask"] == 0] = -100
+                for i in range(text_labels.size(0)):
+                    prefix_len = int(prefix_inputs["attention_mask"][i].sum())
+                    text_labels[i, :prefix_len] = -100
+                out["text_inputs"] = text_inputs
+                out["text_labels"] = text_labels
         return out
 
     train_loader = DataLoader(
@@ -460,6 +567,7 @@ def main():
         t = epoch / float(args.max_epochs - 1)
         return float(args.scheduled_sampling_start + t * (args.scheduled_sampling_end - args.scheduled_sampling_start))
 
+    joint_text_loss = bool(use_text_loss and args.text_loss_mode == "joint_after_act")
     print(f"[Training] Starting training for {args.max_epochs} epochs (from epoch {start_epoch})", flush=True)
     global_step = start_epoch * len(train_loader)
     for epoch in range(start_epoch, args.max_epochs):
@@ -492,22 +600,53 @@ def main():
                 args.future_memory_source, z_future, z_pred_absolute, p_oracle, training=True
             )
 
-            actions_pred, _ = wrapper(
-                model_inputs=model_inputs,
-                act_positions=act_positions,
-                future_memory=future_mem,
-                disable_future_injection=args.disable_future_injection,
-            )
+            loss_text = torch.tensor(0.0, device=device)
+            if joint_text_loss:
+                text_labels = batch["text_labels"].to(device)
+                has_text = bool((text_labels != -100).any().item())
+                if has_text:
+                    outputs = wrapper.vlm(
+                        **model_inputs,
+                        labels=text_labels,
+                        output_hidden_states=True,
+                        return_dict=True,
+                    )
+                    loss_text = outputs.loss
+                else:
+                    outputs = wrapper.vlm(
+                        **model_inputs,
+                        output_hidden_states=True,
+                        return_dict=True,
+                    )
+                hidden = outputs.hidden_states[-1]
+                bsz, horizon = act_positions.shape
+                gather_index = act_positions.unsqueeze(-1).expand(bsz, horizon, hidden.size(-1))
+                act_h = hidden.gather(dim=1, index=gather_index)
+                if (
+                    wrapper.future_injection is not None
+                    and future_mem is not None
+                    and not args.disable_future_injection
+                ):
+                    act_h = wrapper.future_injection(act_h, future_mem)
+                actions_pred = wrapper.action_head(act_h)
+            else:
+                actions_pred, _ = wrapper(
+                    model_inputs=model_inputs,
+                    act_positions=act_positions,
+                    future_memory=future_mem,
+                    disable_future_injection=args.disable_future_injection,
+                )
 
             loss_action = torch.nn.functional.mse_loss(actions_pred, actions_gt)
             # Loss is on delta when delta_prediction, else on absolute
             loss_world = compute_world_loss_continuous(z_pred, delta_target)
-            loss_text = torch.tensor(0.0, device=device)
-            if use_text_loss:
+            if use_text_loss and not joint_text_loss:
                 text_inputs = {k: v.to(device) for k, v in batch["text_inputs"].items()}
                 text_labels = batch["text_labels"].to(device)
-                text_out = wrapper.vlm(**text_inputs, labels=text_labels, return_dict=True)
-                loss_text = text_out.loss
+                has_text = bool((text_labels != -100).any().item())
+                if has_text:
+                    text_out = wrapper.vlm(**text_inputs, labels=text_labels, return_dict=True)
+                    loss_text = text_out.loss
 
             loss = loss_action + args.lambda_world * loss_world + args.lambda_text * loss_text
             loss = loss / max(1, args.grad_accum_steps)
@@ -566,23 +705,57 @@ def main():
                     perm = torch.randperm(z_pred_absolute.size(0), device=z_pred_absolute.device)
                     future_mem = z_pred_absolute[perm]
 
-                actions_pred, _ = wrapper(
-                    model_inputs=model_inputs,
-                    act_positions=act_positions,
-                    future_memory=future_mem,
-                    disable_future_injection=args.disable_future_injection,
-                )
+                loss_text = None
+                if joint_text_loss:
+                    text_labels = batch["text_labels"].to(device)
+                    has_text = bool((text_labels != -100).any().item())
+                    if has_text:
+                        outputs = wrapper.vlm(
+                            **model_inputs,
+                            labels=text_labels,
+                            output_hidden_states=True,
+                            return_dict=True,
+                        )
+                        loss_text = outputs.loss
+                    else:
+                        outputs = wrapper.vlm(
+                            **model_inputs,
+                            output_hidden_states=True,
+                            return_dict=True,
+                        )
+                    hidden = outputs.hidden_states[-1]
+                    bsz, horizon = act_positions.shape
+                    gather_index = act_positions.unsqueeze(-1).expand(bsz, horizon, hidden.size(-1))
+                    act_h = hidden.gather(dim=1, index=gather_index)
+                    if (
+                        wrapper.future_injection is not None
+                        and future_mem is not None
+                        and not args.disable_future_injection
+                    ):
+                        act_h = wrapper.future_injection(act_h, future_mem)
+                    actions_pred = wrapper.action_head(act_h)
+                else:
+                    actions_pred, _ = wrapper(
+                        model_inputs=model_inputs,
+                        act_positions=act_positions,
+                        future_memory=future_mem,
+                        disable_future_injection=args.disable_future_injection,
+                    )
                 loss_action = torch.nn.functional.mse_loss(actions_pred, actions_gt)
                 val_action_losses.append(loss_action.item())
-                if use_text_loss:
+                if use_text_loss and joint_text_loss and loss_text is not None:
+                    val_text_losses.append(float(loss_text.item()))
+                elif use_text_loss and not joint_text_loss:
                     text_inputs = {k: v.to(device) for k, v in batch["text_inputs"].items()}
                     text_labels = batch["text_labels"].to(device)
-                    text_out = wrapper.vlm(**text_inputs, labels=text_labels, return_dict=True)
-                    val_text_losses.append(float(text_out.loss.item()))
+                    has_text = bool((text_labels != -100).any().item())
+                    if has_text:
+                        text_out = wrapper.vlm(**text_inputs, labels=text_labels, return_dict=True)
+                        val_text_losses.append(float(text_out.loss.item()))
 
         mean_val = float(sum(val_action_losses) / max(1, len(val_action_losses)))
         gate = wrapper.gate_value()
-        if use_text_loss:
+        if use_text_loss and val_text_losses:
             mean_text = float(sum(val_text_losses) / max(1, len(val_text_losses)))
             print(
                 f"[Epoch {epoch}] VAL action MSE={mean_val:.6f} text={mean_text:.6f} gate={gate:.4f}"

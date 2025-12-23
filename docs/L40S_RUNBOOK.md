@@ -53,6 +53,11 @@ Set this if you want E4:
 ```
 export COC_JSONL=/path/to/coc_labels.jsonl
 ```
+Notes:
+- JSONL must contain objects with `episode_id` and `coc_text`.
+- By default, episodes without CoC just get `L_text=0` (skipped). If you want to
+  drop such episodes entirely, pass `--require_coc`.
+- CoC loss is computed in the same forward pass by default (`--text_loss_mode joint_after_act`).
 
 ### 5) Launch default experiments (E0, E2, E4)
 ```

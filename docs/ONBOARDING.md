@@ -1,158 +1,130 @@
-# Onboarding: World Modality VLA + CoC Line
+# Onboarding (Curtis): Qwen3‑VL + World Memory (Model F+)
 
-This repo tests the research bet:
+This repo has legacy “small transformer” models (A/B/B_cont/C/F) **and** the new
+pipeline we actually care about on L40S:
 
-> **Make the world model a first-class modality inside a VLA**, via a discrete world-token stream that the transformer both *consumes* and *predicts*.
+> **F+ = generalist VLM (Qwen3‑VL) + action tokens + Model‑F world memory injection + optional CoC.**
 
-It includes two parallel lines:
-
-1) `world_modality/`: A/B/C (+ ablation) world-token VLA experiments.
-2) `coc_vla/`: Chain-of-Causality (CoC) label generation (Qwen3-VL) and a two-head model scaffold.
-
-If you only have time for one thing: generate high-quality CoC labels with `coc_vla/coc_generation.py` and make them crash-proof.
+If you only run one thing on the L40S box: run `scripts/run_fplus_experiments.sh`
+(E0 baseline + E2 Model‑F + optional E4 CoC).
 
 ---
 
-## 0) Clone + install
-
-```bash
-git clone https://github.com/charbelsan/world-modality-vla.git
-cd world-modality-vla
-pip install -r requirements.txt
-```
-
-On AMD MI300X (ROCm) you may need a ROCm PyTorch build; follow your cluster/VM instructions.
+## 0) What to read first
+- Launch/run details: `docs/L40S_RUNBOOK.md`
+- Exact F+ experiment matrix + flags: `docs/LLM_VLA_FPLUS.md`
 
 ---
 
-## 1) World-modality experiments (A/B/C/C_no_world_input)
+## 1) First‑principles architecture (F+)
 
-### Models
+### 1.1 The action interface (VLM → actions, no decoding)
+We add `H` special tokens: `<ACT_0> ... <ACT_{H-1}>` (default `H=8`).
 
-- **A**: standard BC (actions only).
-- **B**: BC + future world token prediction loss (auxiliary only; no world token input).
-- **C**: BC + world token input modality + future token loss (our method).
-- **C_no_world_input**: ablation (same as C but no `w_t` input; still has world loss).
-
-Key comparisons:
-
-- A vs B: does future prediction help at all?
-- B vs C: does treating world as an input modality help beyond aux loss?
-- C vs C_no_world_input: causal ablation for “world modality matters”.
-
-### 1.1 Pick a first dataset
-
-Start with:
-
-- `HuggingFaceVLA/libero`
-
-Typical keys:
-
-- `--image_key observation.images.image`
-- `--proprio_key observation.state`
-- `--action_key action`
-
-### 1.2 Precompute world tokens (one-time)
-
-```bash
-python -m world_modality.precompute_world_tokens \
-  --dataset_name HuggingFaceVLA/libero \
-  --split train \
-  --image_key observation.images.image \
-  --vision_model_name facebook/dinov2-base \
-  --vq_num_tokens 1024 \
-  --l2_normalize \
-  --cache_dir cache
+Prompt per sample:
+```
+<image>
+<instruction>
+<ACT_0> ... <ACT_7>
 ```
 
-This writes:
+We do **one forward pass** of the VLM (no text generation). We take the final
+hidden states at the `<ACT_i>` positions and decode them with an MLP:
 
-- `cache/<dataset>/train_embeddings.fp16.npy`
-- `cache/<dataset>/train_world_tokens.int.npy`
-- `cache/<dataset>/train_codebook_centroids.f32.npy`
+- `h_act`: `[B, H, d_llm]` gathered from the VLM
+- `a_pred = ActionHead(h_act)`: `[B, H, action_dim]`
 
-### 1.3 Train A/B/C/C_no_world_input
+Key point: actions are read from hidden states, **not** from generated text.
 
-All training runs write `config.json` into the `--log_dir`.
+### 1.2 What are `z_hist`, `z_future`, `z_pred`?
+We precompute a per‑frame latent `z_t` from a frozen vision model:
+- `world_latents_source=dino`: DINOv2 frame embedding (fast bootstrap)
+- `world_latents_source=vjepa`: V‑JEPA2 video latent (preferred; more dynamics‑aware)
 
-```bash
-python train_baseline_a.py --dataset_name HuggingFaceVLA/libero --cache_dir cache --log_dir logs_a ...
-python train_baseline_b.py --dataset_name HuggingFaceVLA/libero --cache_dir cache --log_dir logs_b ...
-python train_model_c.py    --dataset_name HuggingFaceVLA/libero --cache_dir cache --log_dir logs_c ...
-python train_model_c.py    --model_type C_no_world_input --dataset_name HuggingFaceVLA/libero --cache_dir cache --log_dir logs_c_no_input ...
-```
+For each training sample at time `t` we build:
+- `z_hist = [z_{t-T+1}, ..., z_t]` with `T=context_frames` → shape `[B, T, D_w]`
+- `z_future = [z_{t+1}, ..., z_{t+K}]` with `K=future_offset` → shape `[B, K, D_w]`
 
-### 1.4 Offline eval + corruption test
+`z_future` is **ground truth future** latents during training only (we have the
+future frames in the dataset).
 
-```bash
-python -m world_modality.eval_offline --checkpoint logs_c/model_C_epoch9.pt --dataset_name HuggingFaceVLA/libero --cache_dir cache
+`z_pred = Prophet(z_hist)` predicts the same object:
+- `z_pred ≈ z_future` → shape `[B, K, D_w]`
 
-python -m world_modality.intervention_corrupt_world --checkpoint logs_c/model_C_epoch9.pt --dataset_name HuggingFaceVLA/libero --cache_dir cache
-```
+So:
+- **What does `z_pred` encode?** A *sequence* of predicted future world latents
+  for the next `K` steps (not “one latent for all futures”).
+- **Why align to `z_future` instead of using `z_future` directly?** Because at
+  inference you do not have future frames, so you must use `z_pred`. We still
+  use `z_future` in training as a supervision target and (optionally) as an
+  oracle memory for scheduled sampling.
 
-`eval_offline` prints action MSE and world-token Top‑1/Top‑5 accuracy (per horizon).
-`intervention_corrupt_world` prints clean vs corrupted MSE and a ratio (corrupt/clean).
+### 1.3 Model‑F world injection (external memory, gated)
+We do **not** insert world tokens into the main LLM context by default.
+Instead, we treat predicted futures as an *external memory*:
 
-### 1.5 If world accuracy is ~0: analyze token predictability
+1) Prophet predicts `z_pred` (or we use `z_future` as oracle early in training).
+2) Project memory to LLM dimension: `kv = W(z_*)` → `[B, K, d_llm]`
+3) Cross‑attend from `<ACT>` states into the memory:
+   - `ctx = CrossAttn(query=h_act, key=kv, value=kv)` → `[B, H, d_llm]`
+4) Gated residual (gate init = 0):
+   - `h_act ← h_act + tanh(gate) * ctx`
 
-Run:
+This is the “do‑no‑harm” mechanism: if the future memory is useless/noisy, the
+model can keep `tanh(gate)≈0`.
 
-```bash
-python -m world_modality.analyze_world_tokens \
-  --dataset_name HuggingFaceVLA/libero \
-  --cache_dir cache \
-  --split train \
-  --max_k 8
-```
+### 1.4 Scheduled sampling (oracle → predicted)
+During training we can mix memory sources:
+- early epochs: mostly oracle `z_future`
+- later epochs: mostly predicted `z_pred`
+- inference: predicted only
 
-If `P(w[t]==w[t+1])` and the bigram baseline are near random, your tokenization is too noisy:
-
-- try `--l2_normalize` (enabled above),
-- reduce `--vq_num_tokens` (e.g. 256),
-- and start with `--future_offset 1` during training (only next-step prediction).
-
-To visually sanity-check whether tokens are semantically coherent, generate token grids:
-
-```bash
-python -m world_modality.inspect_token_images \
-  --dataset_name HuggingFaceVLA/libero \
-  --cache_dir cache \
-  --split train \
-  --image_key observation.images.image \
-  --out_dir token_inspection \
-  --num_tokens 10 \
-  --samples_per_token 12
-```
-
-Open the saved `token_inspection/token_*.jpg` files and verify that frames within a token look related.
+This avoids a training/inference mismatch.
 
 ---
 
-## 2) Crash-proofing: do not lose checkpoints
+## 2) CoC (“talk while acting”) in F+
+We optionally train a language loss on CoC labels, **without letting language
+tokens influence the action path**.
 
-VM restarts are common; do not rely on local disk.
+Default (`--text_loss_mode joint_after_act`):
+- The input sequence contains CoC target tokens *after* `<ACT> ...`.
+- Causality ensures tokens after `<ACT>` cannot affect `<ACT>` hidden states.
+- This matches the “single autoregressive stream” style used by Alpamayo‑R1,
+  but we intentionally keep the direction **act → talk** for safety.
+ - If an episode has no CoC label, `L_text` is skipped for that sample (or pass
+   `--require_coc` to drop unlabeled episodes).
 
-See `ops/README.md` for `rclone` Google Drive continuous sync.
+Alternative (`--text_loss_mode separate`):
+- Run a separate forward pass to compute text loss (simplest mental model, more compute).
+
+Important: we always compute actions from `<ACT>` hidden states; we never parse
+actions out of generated text.
 
 ---
 
-## 3) CoC label generation (Qwen3‑VL)
+## 3) Experiments you will actually run on L40S
+Launcher: `scripts/run_fplus_experiments.sh`
 
-See `coc_vla/README.md`.
+- **E0 (baseline)**: Qwen3‑VL + `<ACT>` + ActionHead, no world injection.
+- **E2 (Model‑F)**: E0 + Prophet + gated cross‑attention into `<ACT>` tokens.
+- **E4 (F+)**: E2 + CoC text loss (if `COC_JSONL` is provided).
 
-Minimal smoke test:
+Diagnostics you might add later (optional):
+- Memory corruption at validation: `--corruption_mode {zero,random,shuffle,oracle}`
+- “No injection” sanity: `--disable_future_injection` (should reduce to baseline)
 
-```bash
-pip install -U "transformers>=4.56" accelerate
-mkdir -p coc_outputs
-python -m coc_vla.coc_generation \
-  --dataset_name HuggingFaceVLA/libero \
-  --image_key observation.images.image \
-  --instruction_key instruction \
-  --output_jsonl coc_outputs/libero_train_coc.jsonl \
-  --backend qwen3-vl \
-  --model_name Qwen/Qwen3-VL-8B-Instruct \
-  --max_episodes 5
-```
+---
 
-Use `--resume` and sync the JSONL if the machine is unstable.
+## 4) Common monitoring signals
+- Action MSE (train/val)
+- `gate=tanh(gate_param)` (should start ~0; may increase if future memory helps)
+- Corruption gap: performance drop when future memory is corrupted (proves reliance)
+
+---
+
+## 5) Legacy A/B/C line (do not run by default)
+The older models (`train_baseline_a.py`, `train_baseline_b.py`, `train_model_c.py`)
+implement “small transformer” ablations with discrete VQ world tokens.
+
+They’re kept for historical comparison, but the default direction is F+ on Qwen3‑VL.

@@ -59,6 +59,7 @@ if [[ -n "${COC_JSONL}" && -f "${COC_JSONL}" ]]; then
     --output_dir "logs_llm/E4_fplus" \
     --lambda_world 0.2 \
     --lambda_text 0.1 \
+    --text_loss_mode "joint_after_act" \
     --coc_jsonl "${COC_JSONL}" \
     --delta_prediction
 else

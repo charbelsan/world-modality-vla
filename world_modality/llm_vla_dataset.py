@@ -57,6 +57,7 @@ class LiberoVLADataset(Dataset):
         split: str = "train",
         world_latents_source: str = "dino",
         coc_jsonl: Optional[str] = None,
+        require_coc: bool = False,
         train_val_split: float = 0.9,
     ):
         if LeRobotDataset is None:
@@ -81,9 +82,11 @@ class LiberoVLADataset(Dataset):
         print("[Dataset] Building episode indices...", flush=True)
         self.episode_indices: List[List[int]] = self._build_episode_indices()
         print(f"[Dataset] Episode indices built: {len(self.episode_indices)} episodes", flush=True)
+        self.episode_ids: List[int] = self._infer_episode_ids()
+        if require_coc and coc_jsonl:
+            self._filter_episodes_without_coc()
         self.indices: List[Tuple[int, int]] = self._compute_indices()
         print(f"[Dataset] Indices computed: {len(self.indices)} samples", flush=True)
-        self.episode_ids: List[int] = self._infer_episode_ids()
 
     def _load_latents(self) -> np.ndarray:
         if not os.path.exists(self.cache_paths.latents_path):
@@ -136,6 +139,24 @@ class LiberoVLADataset(Dataset):
             step0 = self.dataset[gidx0]
             episode_ids.append(int(step0[self.cfg.episode_id_key]))
         return episode_ids
+
+    def _filter_episodes_without_coc(self) -> None:
+        if not self.episode_to_coc:
+            raise ValueError("require_coc=True but CoC mapping is empty.")
+        sample0 = self.dataset[0]
+        if self.cfg.episode_id_key not in sample0:
+            raise ValueError(
+                "require_coc=True but dataset does not provide episode ids; cannot align CoC."
+            )
+        keep_episode_indices: List[List[int]] = []
+        keep_episode_ids: List[int] = []
+        for ep_id, ep_indices in zip(self.episode_ids, self.episode_indices):
+            coc_text = self.episode_to_coc.get(int(ep_id), "")
+            if coc_text:
+                keep_episode_ids.append(int(ep_id))
+                keep_episode_indices.append(ep_indices)
+        self.episode_ids = keep_episode_ids
+        self.episode_indices = keep_episode_indices
 
     def _load_coc_mapping(self, coc_jsonl: Optional[str]) -> Dict[int, str]:
         mapping: Dict[int, str] = {}

@@ -4,8 +4,14 @@ This document defines the F+ model and the exact experiments to run on L40S.
 F+ extends Model F with optional CoC language loss and FLARE-style latent alignment.
 
 ### Core principle (do-no-harm)
-Actions are always read from <ACT_i> hidden states. Language generation is a
-separate pass and never feeds into action computation.
+Actions are always read from `<ACT_i>` hidden states. CoC “talk” is optional and
+**must not change the action path**.
+
+Default implementation (`--text_loss_mode joint_after_act`) appends CoC tokens
+*after* `<ACT>` tokens in the same autoregressive sequence, so causality ensures
+CoC tokens cannot influence `<ACT>` hidden states. You can force a fully
+separate forward pass with `--text_loss_mode separate` if you want the simplest
+mental model.
 
 ### Architecture summary
 1) VLM backbone: Qwen3-VL-3B-Instruct.
@@ -17,8 +23,24 @@ separate pass and never feeds into action computation.
    - Cross-attend z_pred into ACT hidden states only.
    - Gated residual with gate initialized to 0.
 4) CoC (Phase 2):
-   - Separate forward pass for language loss on CoC text.
-   - Actions are computed first and are not conditioned on CoC output.
+   - Default: **single forward pass** where CoC target tokens come after `<ACT>`.
+   - Optional: **separate forward pass** for CoC loss.
+   - In both cases: actions are computed from `<ACT>` hidden states and are not
+     conditioned on generated CoC tokens.
+
+### Relation to Alpamayo‑R1
+Alpamayo‑R1 trains a VLM on a *unified autoregressive token stream* where
+**reasoning and trajectories share a common token space** and are optimized with
+standard next‑token cross‑entropy. In that setup, reasoning is an explicit
+conditioning signal for the behavior/trajectory prediction.
+
+F+ intentionally differs: we want a “do‑no‑harm” robotics policy where control
+does not depend on any text generation (to avoid feedback loops and brittle
+shortcuts). If you want to explore Alpamayo‑style coupling later, do it as an
+explicit ablation (e.g., generate reasoning first, then act), not as the default.
+
+Reference:
+- Alpamayo‑R1 (NVIDIA, 2025): arXiv:2509.19232
 
 ### Losses
 - L_action: MSE on action chunk.
@@ -32,6 +54,7 @@ Total:
 - LIBERO dataset in LeRobot format.
 - Precomputed world latents (DINO or V-JEPA).
 - Optional CoC JSONL with {episode_id, coc_text}.
+  - Missing CoC entries are skipped by default; use `--require_coc` to drop episodes without labels.
 
 ### Precompute world latents
 ```
