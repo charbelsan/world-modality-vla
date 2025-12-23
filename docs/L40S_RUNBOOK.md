@@ -49,12 +49,12 @@ export TRANSFORMERS_CACHE=/mnt/fast/hf_cache/models
 ```
 
 ### 4) CoC labels (Phase 2 only)
-Set this if you want E3/E4:
+Set this if you want E4:
 ```
 export COC_JSONL=/path/to/coc_labels.jsonl
 ```
 
-### 5) Launch all experiments (E0-E4)
+### 5) Launch default experiments (E0, E2, E4)
 ```
 scripts/run_fplus_experiments.sh
 ```
@@ -74,5 +74,5 @@ export LOG_EVERY=50
 
 ### 7) Common blockers
 - Qwen3-VL load fails: upgrade transformers or set `BACKBONE=qwen2_5_vl_3b_instruct`.
-- CoC JSONL missing: E3/E4 are skipped (E0-E2 still run).
+- CoC JSONL missing: E4 is skipped (E0/E2 still run).
 - V-JEPA slow: use `WORLD_SOURCE=dino` to validate plumbing first.

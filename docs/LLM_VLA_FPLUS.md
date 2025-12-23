@@ -43,23 +43,14 @@ python -m world_modality.precompute_world_latents \
 ```
 
 ### Experiment matrix (E0-E4)
-E0: VLM-BC baseline (no world loss, no injection)
-- --disable_future_injection
-- --lambda_world 0.0
+Default runs (in launcher):
+- E0: VLM-BC baseline (no world loss, no injection)
+- E2: Model F (world memory injection)
+- E4: Full F+ (Model F + CoC + FLARE alignment)
 
-E1: Auxiliary world loss only (no injection)
-- --disable_future_injection
-- --lambda_world > 0
-
-E2: Model F (world memory injection)
-- --future_memory_source scheduled
-- --lambda_world > 0
-
-E3: Talk while acting (CoC), actions unchanged
-- Same as E2 plus --lambda_text > 0 and --coc_jsonl
-
-E4: Full F+ (Model F + CoC + FLARE alignment)
-- Same as E3 (this is the default "F+" target).
+Optional diagnostics (not run by default):
+- E1: Auxiliary world loss only (no injection)
+- E3: CoC loss without F+ (talk while acting)
 
 ### Corruption evaluation
 Use validation corruption to verify reliance on future memory:
@@ -76,7 +67,7 @@ Expected:
 - Prefer inference strategies that decouple prediction and execution (RTC-style).
 
 ### Quick launch
-Use `scripts/run_fplus_experiments.sh` to run all experiments sequentially on L40S.
+Use `scripts/run_fplus_experiments.sh` to run the default experiments (E0, E2, E4).
 For a zero-ambiguity setup, see `docs/L40S_RUNBOOK.md`.
 
 Environment variables (optional):
@@ -84,4 +75,4 @@ Environment variables (optional):
 - WORLD_SOURCE (dino or vjepa)
 - BACKBONE (default: qwen3_vl_3b_instruct)
 - BATCH_SIZE, MAX_EPOCHS, LOG_EVERY
-- COC_JSONL (required for E3/E4)
+- COC_JSONL (required for E4)

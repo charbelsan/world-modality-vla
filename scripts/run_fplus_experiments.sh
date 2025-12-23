@@ -12,7 +12,7 @@ BATCH_SIZE=${BATCH_SIZE:-8}
 MAX_EPOCHS=${MAX_EPOCHS:-5}
 LOG_EVERY=${LOG_EVERY:-50}
 
-# Optional CoC JSONL (required for E3/E4)
+# Optional CoC JSONL (required for E4)
 COC_JSONL=${COC_JSONL:-""}
 
 COMMON_ARGS=(
@@ -45,13 +45,6 @@ python -m world_modality.train_llm_vla \
   --disable_future_injection \
   --lambda_world 0.0
 
-echo "=== E1: Aux world loss only (no injection) ==="
-python -m world_modality.train_llm_vla \
-  "${COMMON_ARGS[@]}" \
-  --output_dir "logs_llm/E1_aux_world" \
-  --disable_future_injection \
-  --lambda_world 0.2
-
 echo "=== E2: Model F (world memory injection) ==="
 python -m world_modality.train_llm_vla \
   "${COMMON_ARGS[@]}" \
@@ -59,14 +52,6 @@ python -m world_modality.train_llm_vla \
   --lambda_world 0.2
 
 if [[ -n "${COC_JSONL}" && -f "${COC_JSONL}" ]]; then
-  echo "=== E3: CoC loss (talk while acting) ==="
-  python -m world_modality.train_llm_vla \
-    "${COMMON_ARGS[@]}" \
-    --output_dir "logs_llm/E3_coc" \
-    --lambda_world 0.2 \
-    --lambda_text 0.1 \
-    --coc_jsonl "${COC_JSONL}"
-
   echo "=== E4: Full F+ (Model F + CoC + FLARE alignment) ==="
   python -m world_modality.train_llm_vla \
     "${COMMON_ARGS[@]}" \
@@ -75,5 +60,5 @@ if [[ -n "${COC_JSONL}" && -f "${COC_JSONL}" ]]; then
     --lambda_text 0.1 \
     --coc_jsonl "${COC_JSONL}"
 else
-  echo "COC_JSONL not set or missing. Skipping E3/E4."
+  echo "COC_JSONL not set or missing. Skipping E4."
 fi
