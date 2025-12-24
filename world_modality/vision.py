@@ -32,10 +32,21 @@ class VisionEncoder(torch.nn.Module):
 
         if self.is_vjepa:
             # V-JEPA-v2: Use AutoVideoProcessor for video-native model
-            from transformers import AutoVideoProcessor, AutoModel
+            from transformers import AutoVideoProcessor
+
+            try:
+                # Newer transformers exposes a dedicated model class.
+                from transformers import VJEPA2Model  # type: ignore
+
+                backbone_cls = VJEPA2Model
+            except Exception:  # pragma: no cover
+                # Fall back to generic AutoModel for older versions.
+                from transformers import AutoModel  # type: ignore
+
+                backbone_cls = AutoModel
 
             self.processor = AutoVideoProcessor.from_pretrained(model_name)
-            self.backbone = AutoModel.from_pretrained(
+            self.backbone = backbone_cls.from_pretrained(
                 model_name,
                 torch_dtype=torch_dtype,
                 attn_implementation="sdpa",  # Faster attention
