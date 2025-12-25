@@ -5,6 +5,7 @@ from typing import Iterable, List, Optional, Sequence, Tuple
 import torch
 from torch import nn
 
+from .action_flow import FlowActionHead
 from .model import GatedCrossAttention
 
 
@@ -59,16 +60,28 @@ class QwenVLAWrapper(nn.Module):
         horizon: int,
         future_dim: int,
         enable_future_injection: bool = True,
+        action_head_type: str = "mse",
+        flow_steps: int = 8,
     ):
         super().__init__()
         self.vlm = vlm
         self.horizon = horizon
-        self.action_head = ActionHeadMLP(hidden_size, action_dim)
+        self.action_head_type = action_head_type
+        self.flow_steps = flow_steps
+        if action_head_type == "flow":
+            self.action_head = FlowActionHead(hidden_size, action_dim)
+        else:
+            self.action_head = ActionHeadMLP(hidden_size, action_dim)
         self.future_injection = (
             GatedCrossAttention(hidden_size, num_attention_heads, future_dim)
             if enable_future_injection
             else None
         )
+
+    def predict_actions(self, act_h: torch.Tensor, steps: Optional[int] = None) -> torch.Tensor:
+        if self.action_head_type == "flow":
+            return self.action_head.sample(act_h, steps=steps or self.flow_steps)
+        return self.action_head(act_h)
 
     def forward(
         self,
@@ -92,11 +105,10 @@ class QwenVLAWrapper(nn.Module):
         ):
             act_h = self.future_injection(act_h, future_memory)
 
-        actions = self.action_head(act_h)
+        actions = self.predict_actions(act_h)
         return actions, act_h
 
     def gate_value(self) -> float:
         if self.future_injection is None:
             return 0.0
         return self.future_injection.gate_value()
-
