@@ -47,6 +47,12 @@ Reference:
 - L_world: cosine loss between z_pred and z_future (FLARE-style alignment).
 - L_text: text loss on CoC labels (optional).
 
+Action head variants:
+- `--action_head mse` (default): predicts continuous actions with MSE loss.
+- `--action_head flow`: rectified flow matching over action chunks. Loss is
+  MSE on predicted velocity field; validation still reports action MSE by
+  sampling the flow (controlled by `--flow_steps_eval`).
+
 Total:
   L = L_action + lambda_world * L_world + lambda_text * L_text
 

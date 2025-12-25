@@ -73,6 +73,13 @@ export MAX_EPOCHS=5
 export LOG_EVERY=50
 ```
 
+Action head (optional):
+```
+# Use rectified flow action head instead of MSE regression.
+export ACTION_HEAD=flow
+export FLOW_STEPS_EVAL=8
+```
+
 ### 6) Outputs
 - Latents: `cache/<dataset>/train_world_latents_<source>.fp16.npy`
 - Checkpoints: `logs_llm/E*/llm_vla_epoch*.pt`

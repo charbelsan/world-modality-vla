@@ -12,6 +12,8 @@ BACKBONE=${BACKBONE:-"qwen3_vl_3b_instruct"}
 BATCH_SIZE=${BATCH_SIZE:-8}
 MAX_EPOCHS=${MAX_EPOCHS:-5}
 LOG_EVERY=${LOG_EVERY:-50}
+ACTION_HEAD=${ACTION_HEAD:-"mse"}
+FLOW_STEPS_EVAL=${FLOW_STEPS_EVAL:-8}
 
 # Optional CoC JSONL (required for E4)
 COC_JSONL=${COC_JSONL:-""}
@@ -31,6 +33,8 @@ COMMON_ARGS=(
   --batch_size "${BATCH_SIZE}"
   --max_epochs "${MAX_EPOCHS}"
   --log_every "${LOG_EVERY}"
+  --action_head "${ACTION_HEAD}"
+  --flow_steps_eval "${FLOW_STEPS_EVAL}"
 )
 
 echo "=== Precompute world latents (if not already cached) ==="
