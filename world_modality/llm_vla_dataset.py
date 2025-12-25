@@ -26,7 +26,9 @@ class WorldLatentCachePaths:
 def build_latent_cache_paths(cfg: DataConfig, split: str, source: str) -> WorldLatentCachePaths:
     cache_root = os.path.join(cfg.cache_dir, cfg.dataset_name)
     os.makedirs(cache_root, exist_ok=True)
-    latents_path = os.path.join(cache_root, f"{split}_world_latents_{source}.fp16.npy")
+    # Support latent suffix (e.g., "m4" for temporal latents)
+    suffix = f"_{cfg.latent_suffix}" if cfg.latent_suffix else ""
+    latents_path = os.path.join(cache_root, f"{split}_world_latents_{source}{suffix}.fp16.npy")
     return WorldLatentCachePaths(latents_path=latents_path)
 
 
@@ -71,11 +73,16 @@ class LiberoVLADataset(Dataset):
 
         # Latents are precomputed on the full dataset; we use the "train" cache by default.
         self.cache_paths = build_latent_cache_paths(cfg, "train", world_latents_source)
+        print(f"[Dataset] Loading latents from {self.cache_paths.latents_path}", flush=True)
         self.latents = self._load_latents()
+        print(f"[Dataset] Latents loaded: shape={self.latents.shape}", flush=True)
         self.episode_to_coc = self._load_coc_mapping(coc_jsonl) if coc_jsonl else {}
 
+        print("[Dataset] Building episode indices...", flush=True)
         self.episode_indices: List[List[int]] = self._build_episode_indices()
+        print(f"[Dataset] Episode indices built: {len(self.episode_indices)} episodes", flush=True)
         self.indices: List[Tuple[int, int]] = self._compute_indices()
+        print(f"[Dataset] Indices computed: {len(self.indices)} samples", flush=True)
         self.episode_ids: List[int] = self._infer_episode_ids()
 
     def _load_latents(self) -> np.ndarray:

@@ -56,8 +56,20 @@ def parse_args() -> argparse.Namespace:
         default="vjepa",
         choices=["dino", "vjepa"],
     )
+    p.add_argument(
+        "--latent_suffix",
+        type=str,
+        default="",
+        help="Suffix for latent file (e.g., 'm4' for temporal latents)",
+    )
     p.add_argument("--lambda_world", type=float, default=0.2)
     p.add_argument("--lambda_text", type=float, default=0.0)
+    p.add_argument(
+        "--delta_prediction",
+        action="store_true",
+        help="Train Prophet to predict delta (z_future - z_current) instead of z_future. "
+             "This makes prediction non-trivial when cos(z_t, z_{t+k}) is high.",
+    )
     p.add_argument("--coc_jsonl", type=str, default="")
     p.add_argument("--scheduled_sampling_start", type=float, default=0.9)
     p.add_argument("--scheduled_sampling_end", type=float, default=0.1)
@@ -72,6 +84,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--max_length", type=int, default=512)
     p.add_argument("--device", type=str, default="auto", choices=["auto", "cpu", "cuda"])
     p.add_argument("--output_dir", type=str, default="logs_llm")
+    p.add_argument("--resume_from", type=str, default=None, help="Resume from checkpoint path")
     p.add_argument("--dtype", type=str, default="auto", choices=["auto", "float16", "bfloat16", "float32"])
     p.add_argument("--gradient_checkpointing", action="store_true")
     p.add_argument(
@@ -110,19 +123,32 @@ def choose_future_memory(
     return torch.where(mask, z_oracle, z_pred)
 
 
-def build_prompt(instruction: str, act_tokens: List[str]) -> str:
+def build_prompt(instruction: str, act_tokens: List[str], use_chat_template: bool = False) -> str:
+    """Build prompt text. If use_chat_template=True, returns raw text without <image> placeholder."""
     act_text = " ".join(act_tokens)
     instr = instruction.strip() if instruction else ""
-    if instr:
-        return f"<image>\n{instr}\n{act_text}"
-    return f"<image>\n{act_text}"
+    if use_chat_template:
+        # For Qwen2.5-VL: just return text, image placeholder added by chat template
+        if instr:
+            return f"{instr}\n{act_text}"
+        return act_text
+    else:
+        # For Qwen3-VL: use <image> placeholder
+        if instr:
+            return f"<image>\n{instr}\n{act_text}"
+        return f"<image>\n{act_text}"
 
 
-def build_coc_prompt(instruction: str) -> str:
+def build_coc_prompt(instruction: str, use_chat_template: bool = False) -> str:
     instr = instruction.strip() if instruction else ""
-    if instr:
-        return f"<image>\nInstruction: {instr}\nExplain the action sequence:"
-    return "<image>\nExplain the action sequence:"
+    if use_chat_template:
+        if instr:
+            return f"Instruction: {instr}\nExplain the action sequence:"
+        return "Explain the action sequence:"
+    else:
+        if instr:
+            return f"<image>\nInstruction: {instr}\nExplain the action sequence:"
+        return "<image>\nExplain the action sequence:"
 
 
 def get_dtype(name: str, device: torch.device) -> torch.dtype:
@@ -148,7 +174,7 @@ def get_config_attr(model, name: str, fallback: str) -> int:
     raise AttributeError(f"Model config missing {name}/{fallback}.")
 
 
-def build_dataloaders(args, processor, act_tokens: List[str], use_text_loss: bool):
+def build_dataloaders(args, processor, act_tokens: List[str], use_text_loss: bool, use_chat_template: bool = False):
     cfg = DataConfig(
         dataset_name=args.dataset_name,
         image_key=args.image_key,
@@ -161,6 +187,7 @@ def build_dataloaders(args, processor, act_tokens: List[str], use_text_loss: boo
         future_offset=args.future_offset,
         batch_size=args.batch_size,
         num_workers=args.num_workers,
+        latent_suffix=args.latent_suffix,
     )
 
     train_ds = LiberoVLADataset(
@@ -180,7 +207,19 @@ def build_dataloaders(args, processor, act_tokens: List[str], use_text_loss: boo
 
     def collate(batch: List[Dict]) -> Dict[str, torch.Tensor]:
         images = [b["image"] for b in batch]
-        prompts = [build_prompt(b["instruction"], act_tokens) for b in batch]
+
+        if use_chat_template:
+            # For Qwen2.5-VL: use chat template format
+            prompts = []
+            for b in batch:
+                text_content = build_prompt(b["instruction"], act_tokens, use_chat_template=True)
+                messages = [{"role": "user", "content": [{"type": "image"}, {"type": "text", "text": text_content}]}]
+                prompt = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+                prompts.append(prompt)
+        else:
+            # For Qwen3-VL: use <image> placeholder
+            prompts = [build_prompt(b["instruction"], act_tokens, use_chat_template=False) for b in batch]
+
         model_inputs = processor(
             text=prompts,
             images=images,
@@ -202,8 +241,22 @@ def build_dataloaders(args, processor, act_tokens: List[str], use_text_loss: boo
         }
         if use_text_loss:
             coc_texts = [b.get("coc_text", "") for b in batch]
-            text_prompts = [build_coc_prompt(b["instruction"]) for b in batch]
-            full_texts = [f"{p} {t}" if t else p for p, t in zip(text_prompts, coc_texts)]
+            if use_chat_template:
+                # For Qwen2.5-VL: use chat template format for CoC
+                full_texts = []
+                text_prompts = []
+                for b, coc in zip(batch, coc_texts):
+                    prompt_text = build_coc_prompt(b["instruction"], use_chat_template=True)
+                    full_text = f"{prompt_text} {coc}" if coc else prompt_text
+                    messages = [{"role": "user", "content": [{"type": "image"}, {"type": "text", "text": full_text}]}]
+                    full_texts.append(processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True))
+                    # For prefix (prompt only)
+                    prefix_messages = [{"role": "user", "content": [{"type": "image"}, {"type": "text", "text": prompt_text}]}]
+                    text_prompts.append(processor.apply_chat_template(prefix_messages, tokenize=False, add_generation_prompt=True))
+            else:
+                text_prompts = [build_coc_prompt(b["instruction"], use_chat_template=False) for b in batch]
+                full_texts = [f"{p} {t}" if t else p for p, t in zip(text_prompts, coc_texts)]
+
             text_inputs = processor(
                 text=full_texts,
                 images=images,
@@ -290,6 +343,11 @@ def main():
         target_modules = [m.strip() for m in args.lora_target_modules.split(",") if m.strip()]
         num_layers = get_config_attr(model, "num_hidden_layers", "num_hidden_layers")
         layers = list(range(max(0, num_layers - args.lora_layers), num_layers)) if num_layers else None
+        # Determine layers_pattern based on backbone architecture
+        if "qwen2_5" in args.vlm_backbone.lower() or "qwen2.5" in args.vlm_backbone.lower():
+            layers_pattern = "language_model.layers"
+        else:
+            layers_pattern = "model.layers"
         lora_cfg = LoraConfig(
             r=args.lora_r,
             lora_alpha=args.lora_alpha,
@@ -297,7 +355,7 @@ def main():
             target_modules=target_modules,
             task_type=TaskType.CAUSAL_LM,
             layers_to_transform=layers,
-            layers_pattern="model.layers",
+            layers_pattern=layers_pattern,
         )
         model = get_peft_model(model, lora_cfg)
         model.print_trainable_parameters()
@@ -305,13 +363,19 @@ def main():
     model.to(device)
 
     # Build dataloaders after tokenizer update.
+    print("[Main] Building dataloaders...", flush=True)
     use_text_loss = args.lambda_text > 0
+    # Use chat template for Qwen2.5-VL (required for proper image token handling)
+    use_chat_template = "qwen2_5" in args.vlm_backbone.lower() or "qwen2.5" in args.vlm_backbone.lower()
     train_loader, val_loader, act_token_ids = build_dataloaders(
-        args, processor, act_tokens, use_text_loss=use_text_loss
+        args, processor, act_tokens, use_text_loss=use_text_loss, use_chat_template=use_chat_template
     )
+    print(f"[Main] Dataloaders built: train={len(train_loader)} batches, val={len(val_loader)} batches", flush=True)
 
     # Infer dimensions from a batch.
+    print("[Main] Fetching first batch to infer dimensions...", flush=True)
     sample = next(iter(train_loader))
+    print("[Main] First batch fetched", flush=True)
     actions = sample["actions"]
     z_hist = sample["z_hist"]
     action_dim = int(actions.shape[-1])
@@ -325,7 +389,7 @@ def main():
         n_layers=2,
         n_heads=8,
         dropout=0.0,
-    ).to(device)
+    ).to(device, dtype=dtype)
 
     num_heads = get_config_attr(model, "num_attention_heads", "num_attention_heads")
     wrapper = QwenVLAWrapper(
@@ -336,7 +400,47 @@ def main():
         horizon=args.action_horizon,
         future_dim=latent_dim,
         enable_future_injection=not args.disable_future_injection,
-    ).to(device)
+    ).to(device, dtype=dtype)
+
+    # Resume from checkpoint if specified
+    start_epoch = 0
+    if args.resume_from:
+        print(f"[Resume] Loading checkpoint from {args.resume_from}", flush=True)
+        resume_ckpt = torch.load(args.resume_from, map_location="cpu", weights_only=False)
+
+        # Load LoRA weights if present
+        if "lora_state_dict" in resume_ckpt and args.use_lora:
+            model.load_state_dict(resume_ckpt["lora_state_dict"], strict=False)
+            print("[Resume] Loaded LoRA weights", flush=True)
+
+        # Load ACT embeddings if present
+        if "act_embeddings" in resume_ckpt:
+            num_act = len(act_tokens)
+            embed_layer = model.get_base_model().get_input_embeddings() if args.use_lora else model.get_input_embeddings()
+            with torch.no_grad():
+                embed_layer.weight[-num_act:] = resume_ckpt["act_embeddings"].to(embed_layer.weight.dtype)
+            print("[Resume] Loaded ACT embeddings", flush=True)
+
+        # Load action head
+        wrapper.action_head.load_state_dict(resume_ckpt["action_head_state_dict"])
+        print("[Resume] Loaded action head", flush=True)
+
+        # Load prophet
+        prophet.load_state_dict(resume_ckpt["prophet_state_dict"])
+        print("[Resume] Loaded prophet", flush=True)
+
+        # Load future injection if present
+        if wrapper.future_injection is not None and "future_injection_state_dict" in resume_ckpt:
+            if resume_ckpt["future_injection_state_dict"] is not None:
+                wrapper.future_injection.load_state_dict(resume_ckpt["future_injection_state_dict"])
+                print("[Resume] Loaded future injection", flush=True)
+
+        # Determine start epoch from checkpoint filename (e.g., llm_vla_epoch0.pt -> start at epoch 1)
+        import re
+        match = re.search(r"epoch(\d+)\.pt$", args.resume_from)
+        if match:
+            start_epoch = int(match.group(1)) + 1
+            print(f"[Resume] Starting from epoch {start_epoch}", flush=True)
 
     params = list(wrapper.action_head.parameters()) + list(prophet.parameters())
     if wrapper.future_injection is not None:
@@ -356,22 +460,36 @@ def main():
         t = epoch / float(args.max_epochs - 1)
         return float(args.scheduled_sampling_start + t * (args.scheduled_sampling_end - args.scheduled_sampling_start))
 
-    global_step = 0
-    for epoch in range(args.max_epochs):
+    print(f"[Training] Starting training for {args.max_epochs} epochs (from epoch {start_epoch})", flush=True)
+    global_step = start_epoch * len(train_loader)
+    for epoch in range(start_epoch, args.max_epochs):
         wrapper.train()
         prophet.train()
         p_oracle = scheduled_p_oracle(epoch)
+        print(f"[Training] Epoch {epoch} started, p_oracle={p_oracle:.2f}", flush=True)
 
         for step, batch in enumerate(train_loader):
             model_inputs = {k: v.to(device) for k, v in batch["model_inputs"].items()}
             act_positions = batch["act_positions"].to(device)
-            actions_gt = batch["actions"].to(device)
-            z_hist = batch["z_hist"].to(device)
-            z_future = batch["z_future"].to(device)
+            actions_gt = batch["actions"].to(device, dtype=dtype)
+            z_hist = batch["z_hist"].to(device, dtype=dtype)
+            z_future = batch["z_future"].to(device, dtype=dtype)
+
+            # z_current: last frame of history for delta prediction
+            z_current = z_hist[:, -1:, :]  # [B, 1, D]
 
             z_pred = prophet(z_hist)
+
+            # For delta prediction: Prophet outputs delta, convert to absolute for future_mem
+            if args.delta_prediction:
+                z_pred_absolute = z_current + z_pred  # [B, K, D]
+                delta_target = z_future - z_current  # [B, K, D]
+            else:
+                z_pred_absolute = z_pred
+                delta_target = z_future
+
             future_mem = choose_future_memory(
-                args.future_memory_source, z_future, z_pred, p_oracle, training=True
+                args.future_memory_source, z_future, z_pred_absolute, p_oracle, training=True
             )
 
             actions_pred, _ = wrapper(
@@ -382,7 +500,8 @@ def main():
             )
 
             loss_action = torch.nn.functional.mse_loss(actions_pred, actions_gt)
-            loss_world = compute_world_loss_continuous(z_pred, z_future)
+            # Loss is on delta when delta_prediction, else on absolute
+            loss_world = compute_world_loss_continuous(z_pred, delta_target)
             loss_text = torch.tensor(0.0, device=device)
             if use_text_loss:
                 text_inputs = {k: v.to(device) for k, v in batch["text_inputs"].items()}
@@ -407,9 +526,12 @@ def main():
                 print(
                     f"[Epoch {epoch} Step {global_step}] "
                     f"loss={loss.item():.4f} action={loss_action.item():.4f} "
-                    f"world={loss_world.item():.4f} text={loss_text.item():.4f} gate={gate:.4f}"
+                    f"world={loss_world.item():.4f} text={loss_text.item():.4f} gate={gate:.4f}",
+                    flush=True
                 )
             global_step += 1
+            if global_step == 1:
+                print(f"[Training] First step completed", flush=True)
 
         # Simple validation.
         wrapper.eval()
@@ -420,21 +542,29 @@ def main():
             for batch in val_loader:
                 model_inputs = {k: v.to(device) for k, v in batch["model_inputs"].items()}
                 act_positions = batch["act_positions"].to(device)
-                actions_gt = batch["actions"].to(device)
-                z_hist = batch["z_hist"].to(device)
-                z_future = batch["z_future"].to(device)
+                actions_gt = batch["actions"].to(device, dtype=dtype)
+                z_hist = batch["z_hist"].to(device, dtype=dtype)
+                z_future = batch["z_future"].to(device, dtype=dtype)
 
+                z_current = z_hist[:, -1:, :]  # [B, 1, D]
                 z_pred = prophet(z_hist)
-                future_mem = z_pred
+
+                # Convert delta prediction to absolute
+                if args.delta_prediction:
+                    z_pred_absolute = z_current + z_pred
+                else:
+                    z_pred_absolute = z_pred
+
+                future_mem = z_pred_absolute
                 if args.corruption_mode == "oracle":
                     future_mem = z_future
                 elif args.corruption_mode == "zero":
-                    future_mem = torch.zeros_like(z_pred)
+                    future_mem = torch.zeros_like(z_pred_absolute)
                 elif args.corruption_mode == "random":
-                    future_mem = torch.randn_like(z_pred)
+                    future_mem = torch.randn_like(z_pred_absolute)
                 elif args.corruption_mode == "shuffle":
-                    perm = torch.randperm(z_pred.size(0), device=z_pred.device)
-                    future_mem = z_pred[perm]
+                    perm = torch.randperm(z_pred_absolute.size(0), device=z_pred_absolute.device)
+                    future_mem = z_pred_absolute[perm]
 
                 actions_pred, _ = wrapper(
                     model_inputs=model_inputs,
@@ -470,6 +600,23 @@ def main():
                 wrapper.future_injection.state_dict() if wrapper.future_injection is not None else None
             ),
         }
+
+        # Save LoRA adapter weights if using LoRA
+        if args.use_lora:
+            # PEFT model's state_dict() returns only adapter weights
+            ckpt["lora_state_dict"] = model.state_dict()
+
+        # Save ACT token embeddings (only the new tokens, not full embedding table)
+        # Get embedding layer from the model
+        if args.use_lora:
+            embed_layer = model.get_base_model().get_input_embeddings()
+        else:
+            embed_layer = model.get_input_embeddings()
+        # ACT tokens are the last `len(act_tokens)` in the vocabulary
+        num_act_tokens = len(act_tokens)
+        act_embeddings = embed_layer.weight[-num_act_tokens:].detach().cpu()
+        ckpt["act_embeddings"] = act_embeddings
+
         ckpt_path = os.path.join(args.output_dir, f"llm_vla_epoch{epoch}.pt")
         torch.save(ckpt, ckpt_path)
         print(f"Saved checkpoint to {ckpt_path}")

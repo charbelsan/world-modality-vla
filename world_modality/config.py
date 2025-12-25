@@ -24,6 +24,7 @@ class DataConfig:
     cache_dir: str = "cache"
     max_train_steps: Optional[int] = None
     preload_to_gpu: bool = False
+    latent_suffix: str = ""  # e.g., "m4" for temporal latents
 
 
 # Alias for backward compatibility with Phase-2 code

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
-from typing import List
+from dataclasses import replace
+from typing import List, Tuple
 
 import numpy as np
 import torch
@@ -28,6 +30,66 @@ class FrameDataset(Dataset):
     def __getitem__(self, idx):
         step = self.ds[idx]
         return step[self.image_key]
+
+
+class TemporalClipDataset(Dataset):
+    """Dataset that returns m consecutive frames for temporal encoding.
+
+    Handles episode boundaries with repeat-padding at the start.
+    """
+
+    def __init__(self, lerobot_ds, image_key: str, temporal_window: int):
+        self.ds = lerobot_ds
+        self.image_key = image_key
+        self.m = temporal_window
+
+        # Build episode index: maps global_idx -> (episode_id, local_idx, episode_start_global)
+        self.episode_info = self._build_episode_info()
+
+    def _build_episode_info(self) -> List[Tuple[int, int, int]]:
+        """Build mapping from global index to episode info."""
+        info = []
+        # LeRobot datasets have episode_index field
+        if hasattr(self.ds, 'episodes') and self.ds.episodes is not None:
+            episodes = self.ds.episodes
+        else:
+            # Fallback: treat entire dataset as one episode
+            return [(0, i, 0) for i in range(len(self.ds))]
+
+        # Build from episode_data_index
+        episode_starts = {}
+        for ep_idx in range(len(episodes)):
+            start = self.ds.episode_data_index['from'][ep_idx].item()
+            end = self.ds.episode_data_index['to'][ep_idx].item()
+            for local_idx, global_idx in enumerate(range(start, end)):
+                info.append((ep_idx, local_idx, start))
+        return info
+
+    def __len__(self):
+        return len(self.ds)
+
+    def __getitem__(self, idx):
+        """Return m frames ending at idx, with repeat-padding at episode start."""
+        ep_idx, local_idx, ep_start = self.episode_info[idx]
+
+        # Get m frame indices with repeat-padding at boundaries
+        frame_indices = []
+        for i in range(self.m):
+            offset = -(self.m - 1) + i  # e.g., m=4: [-3, -2, -1, 0]
+            global_idx = idx + offset
+            # Clamp to episode start
+            global_idx = max(global_idx, ep_start)
+            frame_indices.append(global_idx)
+
+        # Load frames
+        frames = []
+        for fidx in frame_indices:
+            frame = self.ds[fidx][self.image_key]
+            frames.append(frame)
+
+        # Stack to [m, H, W, C] or [m, C, H, W] depending on format
+        frames = torch.stack([torch.as_tensor(np.array(f)) for f in frames])
+        return frames
 
 
 def load_vjepa_encoder(checkpoint_path: str, device: torch.device, dtype: torch.dtype):
@@ -58,12 +120,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--world_latents_source", type=str, default="vjepa", choices=["dino", "vjepa"])
     parser.add_argument("--vision_model_name", type=str, default="facebook/dinov2-base")
     parser.add_argument("--vjepa_checkpoint", type=str, default="", help="Optional TorchScript encoder for V-JEPA.")
+    parser.add_argument("--temporal_window", type=int, default=1,
+                        help="Number of frames per clip for temporal encoding (1=single-frame, 4=recommended)")
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
     device = resolve_device(args.device)
+    temporal_window = args.temporal_window
 
     data_cfg = DataConfig(
         dataset_name=args.dataset_name,
@@ -77,7 +142,23 @@ def main():
     ds = LeRobotDataset(data_cfg.dataset_name)
     cache_paths = build_latent_cache_paths(data_cfg, args.split, args.world_latents_source)
 
-    frame_ds = FrameDataset(ds, data_cfg.image_key)
+    # Modify cache path for temporal encoding
+    if temporal_window > 1:
+        base_path = cache_paths.latents_path
+        # Insert _m{window} before .fp16.npy
+        if ".fp16.npy" in base_path:
+            new_path = base_path.replace(".fp16.npy", f"_m{temporal_window}.fp16.npy")
+        else:
+            new_path = base_path.replace(".npy", f"_m{temporal_window}.npy")
+        cache_paths = replace(cache_paths, latents_path=new_path)
+        print(f"[Temporal] Using m={temporal_window} frames per embedding")
+
+    # Choose dataset based on temporal_window
+    if temporal_window > 1:
+        frame_ds = TemporalClipDataset(ds, data_cfg.image_key, temporal_window)
+    else:
+        frame_ds = FrameDataset(ds, data_cfg.image_key)
+
     loader_kwargs = {
         "batch_size": args.batch_size,
         "shuffle": False,
@@ -101,6 +182,8 @@ def main():
         return torch.as_tensor(x)
 
     if args.world_latents_source == "dino":
+        if temporal_window > 1:
+            raise ValueError("Temporal encoding only supported for V-JEPA, not DINO")
         encoder = VisionEncoder(args.vision_model_name, device=str(device))
 
         def encode_batch(batch_imgs: List) -> torch.Tensor:
@@ -117,6 +200,8 @@ def main():
         if device.type != "cuda":
             raise RuntimeError("V-JEPA latents require CUDA for reasonable throughput.")
         if args.vjepa_checkpoint:
+            if temporal_window > 1:
+                raise ValueError("TorchScript V-JEPA checkpoint doesn't support temporal encoding. Use HF model.")
             encode_fn = load_vjepa_encoder(args.vjepa_checkpoint, device, torch.float16)
 
             def encode_batch(batch_imgs: List) -> torch.Tensor:
@@ -136,15 +221,25 @@ def main():
                 print(f"[V-JEPA] Using default HF model: {model_name}")
             encoder = VisionEncoder(model_name, device=str(device))
 
-            def encode_batch(batch_imgs: List) -> torch.Tensor:
-                if isinstance(batch_imgs, torch.Tensor):
-                    imgs = batch_imgs
-                else:
-                    imgs = torch.stack([to_tensor(x) for x in batch_imgs])
-                if imgs.dim() == 4 and imgs.shape[-1] == 3:
-                    imgs = imgs.permute(0, 3, 1, 2)
-                imgs = imgs.to(device)
-                return encoder.encode(imgs)
+            if temporal_window > 1:
+                # Multi-frame temporal encoding
+                def encode_batch(batch_clips: torch.Tensor) -> torch.Tensor:
+                    # batch_clips: [B, m, H, W, C] from TemporalClipDataset
+                    if batch_clips.dim() == 5 and batch_clips.shape[-1] == 3:
+                        # [B, m, H, W, C] -> [B, m, C, H, W]
+                        batch_clips = batch_clips.permute(0, 1, 4, 2, 3)
+                    return encoder.encode_temporal(batch_clips)
+            else:
+                # Single-frame encoding (original behavior)
+                def encode_batch(batch_imgs: List) -> torch.Tensor:
+                    if isinstance(batch_imgs, torch.Tensor):
+                        imgs = batch_imgs
+                    else:
+                        imgs = torch.stack([to_tensor(x) for x in batch_imgs])
+                    if imgs.dim() == 4 and imgs.shape[-1] == 3:
+                        imgs = imgs.permute(0, 3, 1, 2)
+                    imgs = imgs.to(device)
+                    return encoder.encode(imgs)
 
     # Probe embedding dimension with a single batch.
     first_batch = next(iter(loader))
@@ -176,6 +271,22 @@ def main():
 
     latents_mm.flush()
     print(f"Saved latents to {cache_paths.latents_path}")
+
+    # Save metadata JSON for temporal encoding
+    if temporal_window > 1:
+        metadata = {
+            "temporal_window": temporal_window,
+            "model": model_name if args.world_latents_source == "vjepa" else args.vision_model_name,
+            "pooling": "mean_spatial_then_temporal",
+            "embedding_dim": emb_dim,
+            "total_frames": total,
+            "dataset": args.dataset_name,
+            "split": args.split,
+        }
+        metadata_path = cache_paths.latents_path.replace(".npy", "_metadata.json")
+        with open(metadata_path, "w") as f:
+            json.dump(metadata, f, indent=2)
+        print(f"Saved metadata to {metadata_path}")
 
 
 if __name__ == "__main__":

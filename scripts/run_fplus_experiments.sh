@@ -49,7 +49,8 @@ echo "=== E2: Model F (world memory injection) ==="
 python -m world_modality.train_llm_vla \
   "${COMMON_ARGS[@]}" \
   --output_dir "logs_llm/E2_model_f" \
-  --lambda_world 0.2
+  --lambda_world 0.2 \
+  --delta_prediction
 
 if [[ -n "${COC_JSONL}" && -f "${COC_JSONL}" ]]; then
   echo "=== E4: Full F+ (Model F + CoC + FLARE alignment) ==="
@@ -58,7 +59,8 @@ if [[ -n "${COC_JSONL}" && -f "${COC_JSONL}" ]]; then
     --output_dir "logs_llm/E4_fplus" \
     --lambda_world 0.2 \
     --lambda_text 0.1 \
-    --coc_jsonl "${COC_JSONL}"
+    --coc_jsonl "${COC_JSONL}" \
+    --delta_prediction
 else
   echo "COC_JSONL not set or missing. Skipping E4."
 fi
