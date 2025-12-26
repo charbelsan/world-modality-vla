@@ -170,7 +170,10 @@ class LiberoVLADataset(Dataset):
             for line in f:
                 try:
                     obj = json.loads(line)
-                    mapping[int(obj["episode_id"])] = str(obj["coc_text"])
+                    ep = obj.get("episode_index", obj.get("episode_id", None))
+                    if ep is None:
+                        continue
+                    mapping[int(ep)] = str(obj["coc_text"])
                 except Exception:
                     continue
         return mapping
@@ -201,7 +204,16 @@ class LiberoVLADataset(Dataset):
         gidx = self._get_global_index(ep_idx, local_t)
         step = self.dataset[gidx]
         image = _to_pil_image(step[cfg.image_key])
-        instruction = step.get(cfg.instruction_key, "")
+        if cfg.instruction_key not in step:
+            keys = sorted(list(step.keys()))
+            hint = ""
+            if "task" in step:
+                hint = " (Hint: HuggingFaceVLA/libero provides the instruction string under the key 'task'.)"
+            raise KeyError(
+                f"Instruction key '{cfg.instruction_key}' not found in dataset sample.{hint} "
+                f"Available keys: {keys}"
+            )
+        instruction = step[cfg.instruction_key]
 
         # Actions
         actions = []

@@ -52,8 +52,9 @@ Total:
 
 ### Data requirements
 - LIBERO dataset in LeRobot format.
+- For `HuggingFaceVLA/libero`, the task language string is provided under the key `task` (not `instruction`).
 - Precomputed world latents (DINO or V-JEPA).
-- Optional CoC JSONL with {episode_id, coc_text}.
+- Optional CoC JSONL with {episode_index, coc_text} (or {episode_id, coc_text} for backward-compat).
   - Missing CoC entries are skipped by default; use `--require_coc` to drop episodes without labels.
 
 ### Precompute world latents
@@ -94,7 +95,7 @@ Use `scripts/run_fplus_experiments.sh` to run the default experiments (E0, E2, E
 For a zero-ambiguity setup, see `docs/L40S_RUNBOOK.md`.
 
 Environment variables (optional):
-- DATASET, IMAGE_KEY, INSTRUCTION_KEY, CACHE_DIR
+- DATASET, IMAGE_KEY, INSTRUCTION_KEY, EPISODE_ID_KEY, CACHE_DIR
 - WORLD_SOURCE (dino or vjepa)
 - BACKBONE (default: qwen3_vl_3b_instruct)
 - BATCH_SIZE, MAX_EPOCHS, LOG_EVERY

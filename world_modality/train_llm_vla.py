@@ -22,10 +22,10 @@ from .train_utils import compute_world_loss_continuous, get_linear_warmup_schedu
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Train Qwen VLM + action head + world memory (Model F-style).")
     p.add_argument("--dataset_name", type=str, default="HuggingFaceVLA/libero")
-    p.add_argument("--image_key", type=str, default="rgb")
-    p.add_argument("--instruction_key", type=str, default="instruction")
+    p.add_argument("--image_key", type=str, default="observation.images.image")
+    p.add_argument("--instruction_key", type=str, default="task")
     p.add_argument("--action_key", type=str, default="action")
-    p.add_argument("--episode_id_key", type=str, default="episode_id")
+    p.add_argument("--episode_id_key", type=str, default="episode_index")
     p.add_argument("--cache_dir", type=str, default="cache")
     p.add_argument("--batch_size", type=int, default=8)
     p.add_argument("--num_workers", type=int, default=4)

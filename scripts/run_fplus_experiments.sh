@@ -4,7 +4,8 @@ set -euo pipefail
 # Common settings
 DATASET=${DATASET:-"HuggingFaceVLA/libero"}
 IMAGE_KEY=${IMAGE_KEY:-"observation.images.image"}
-INSTRUCTION_KEY=${INSTRUCTION_KEY:-"instruction"}
+INSTRUCTION_KEY=${INSTRUCTION_KEY:-"task"}
+EPISODE_ID_KEY=${EPISODE_ID_KEY:-"episode_index"}
 CACHE_DIR=${CACHE_DIR:-"cache"}
 WORLD_SOURCE=${WORLD_SOURCE:-"vjepa"}  # dino or vjepa
 BACKBONE=${BACKBONE:-"qwen3_vl_3b_instruct"}
@@ -21,6 +22,7 @@ COMMON_ARGS=(
   --dataset_name "${DATASET}"
   --image_key "${IMAGE_KEY}"
   --instruction_key "${INSTRUCTION_KEY}"
+  --episode_id_key "${EPISODE_ID_KEY}"
   --cache_dir "${CACHE_DIR}"
   --world_latents_source "${WORLD_SOURCE}"
   --future_memory_source "scheduled"

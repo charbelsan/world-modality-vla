@@ -104,7 +104,7 @@ python -m world_modality.train_llm_vla \
   --trust_remote_code \
   --dataset_name HuggingFaceVLA/libero \
   --image_key observation.images.image \
-  --instruction_key instruction \
+  --instruction_key task \
   --world_latents_source dino \
   --future_memory_source predicted \
   --disable_future_injection \
@@ -119,7 +119,7 @@ python -m world_modality.train_llm_vla \
   --trust_remote_code \
   --dataset_name HuggingFaceVLA/libero \
   --image_key observation.images.image \
-  --instruction_key instruction \
+  --instruction_key task \
   --world_latents_source dino \
   --future_memory_source scheduled \
   --lambda_world 0.2
@@ -141,7 +141,7 @@ python -m world_modality.train_llm_vla \
   --trust_remote_code \
   --dataset_name HuggingFaceVLA/libero \
   --image_key observation.images.image \
-  --instruction_key instruction \
+  --instruction_key task \
   --world_latents_source dino \
   --future_memory_source scheduled \
   --lambda_world 0.2 \
