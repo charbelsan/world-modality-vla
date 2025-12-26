@@ -32,6 +32,14 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--context_frames", type=int, default=3)
     p.add_argument("--action_horizon", type=int, default=8)
     p.add_argument("--future_offset", type=int, default=8)
+    p.add_argument(
+        "--action_head",
+        type=str,
+        default="mse",
+        choices=["mse", "flow"],
+        help="Action head type: mse (regression) or flow (rectified flow matching).",
+    )
+    p.add_argument("--flow_steps_eval", type=int, default=8, help="Sampling steps for flow head during eval.")
 
     p.add_argument("--vlm_backbone", type=str, default="qwen3_vl_3b_instruct")
     p.add_argument("--trust_remote_code", action="store_true")
@@ -507,6 +515,8 @@ def main():
         horizon=args.action_horizon,
         future_dim=latent_dim,
         enable_future_injection=not args.disable_future_injection,
+        action_head_type=args.action_head,
+        flow_steps=args.flow_steps_eval,
     ).to(device, dtype=dtype)
 
     # Resume from checkpoint if specified
@@ -601,17 +611,25 @@ def main():
             )
 
             loss_text = torch.tensor(0.0, device=device)
-            if joint_text_loss:
-                text_labels = batch["text_labels"].to(device)
-                has_text = bool((text_labels != -100).any().item())
-                if has_text:
-                    outputs = wrapper.vlm(
-                        **model_inputs,
-                        labels=text_labels,
-                        output_hidden_states=True,
-                        return_dict=True,
-                    )
-                    loss_text = outputs.loss
+            is_flow = args.action_head == "flow"
+            if is_flow:
+                if joint_text_loss:
+                    text_labels = batch["text_labels"].to(device)
+                    has_text = bool((text_labels != -100).any().item())
+                    if has_text:
+                        outputs = wrapper.vlm(
+                            **model_inputs,
+                            labels=text_labels,
+                            output_hidden_states=True,
+                            return_dict=True,
+                        )
+                        loss_text = outputs.loss
+                    else:
+                        outputs = wrapper.vlm(
+                            **model_inputs,
+                            output_hidden_states=True,
+                            return_dict=True,
+                        )
                 else:
                     outputs = wrapper.vlm(
                         **model_inputs,
@@ -628,17 +646,50 @@ def main():
                     and not args.disable_future_injection
                 ):
                     act_h = wrapper.future_injection(act_h, future_mem)
-                actions_pred = wrapper.action_head(act_h)
+                t = torch.rand(bsz, horizon, 1, device=device, dtype=actions_gt.dtype)
+                eps = torch.randn_like(actions_gt)
+                x_t = (1.0 - t) * eps + t * actions_gt
+                v_target = actions_gt - eps
+                v_pred = wrapper.action_head(act_h, x_t, t)
+                loss_action = torch.nn.functional.mse_loss(v_pred, v_target)
             else:
-                actions_pred, _ = wrapper(
-                    model_inputs=model_inputs,
-                    act_positions=act_positions,
-                    future_memory=future_mem,
-                    disable_future_injection=args.disable_future_injection,
-                )
-
-            loss_action = torch.nn.functional.mse_loss(actions_pred, actions_gt)
-            # Loss is on delta when delta_prediction, else on absolute
+                if joint_text_loss:
+                    text_labels = batch["text_labels"].to(device)
+                    has_text = bool((text_labels != -100).any().item())
+                    if has_text:
+                        outputs = wrapper.vlm(
+                            **model_inputs,
+                            labels=text_labels,
+                            output_hidden_states=True,
+                            return_dict=True,
+                        )
+                        loss_text = outputs.loss
+                    else:
+                        outputs = wrapper.vlm(
+                            **model_inputs,
+                            output_hidden_states=True,
+                            return_dict=True,
+                        )
+                    hidden = outputs.hidden_states[-1]
+                    bsz, horizon = act_positions.shape
+                    gather_index = act_positions.unsqueeze(-1).expand(bsz, horizon, hidden.size(-1))
+                    act_h = hidden.gather(dim=1, index=gather_index)
+                    if (
+                        wrapper.future_injection is not None
+                        and future_mem is not None
+                        and not args.disable_future_injection
+                    ):
+                        act_h = wrapper.future_injection(act_h, future_mem)
+                    actions_pred = wrapper.action_head(act_h)
+                else:
+                    actions_pred, _ = wrapper(
+                        model_inputs=model_inputs,
+                        act_positions=act_positions,
+                        future_memory=future_mem,
+                        disable_future_injection=args.disable_future_injection,
+                    )
+                loss_action = torch.nn.functional.mse_loss(actions_pred, actions_gt)
+            # Loss is on delta when delta_prediction, else on absolute.
             loss_world = compute_world_loss_continuous(z_pred, delta_target)
             if use_text_loss and not joint_text_loss:
                 text_inputs = {k: v.to(device) for k, v in batch["text_inputs"].items()}
@@ -677,6 +728,7 @@ def main():
         prophet.eval()
         val_action_losses = []
         val_text_losses = []
+        is_flow = args.action_head == "flow"
         with torch.no_grad():
             for batch in val_loader:
                 model_inputs = {k: v.to(device) for k, v in batch["model_inputs"].items()}
@@ -733,14 +785,37 @@ def main():
                         and not args.disable_future_injection
                     ):
                         act_h = wrapper.future_injection(act_h, future_mem)
-                    actions_pred = wrapper.action_head(act_h)
+                    if is_flow:
+                        actions_pred = wrapper.action_head.sample(act_h, steps=args.flow_steps_eval)
+                    else:
+                        actions_pred = wrapper.action_head(act_h)
                 else:
-                    actions_pred, _ = wrapper(
-                        model_inputs=model_inputs,
-                        act_positions=act_positions,
-                        future_memory=future_mem,
-                        disable_future_injection=args.disable_future_injection,
-                    )
+                    if is_flow:
+                        outputs = wrapper.vlm(
+                            **model_inputs,
+                            output_hidden_states=True,
+                            return_dict=True,
+                        )
+                        hidden = outputs.hidden_states[-1]
+                        bsz, horizon = act_positions.shape
+                        gather_index = act_positions.unsqueeze(-1).expand(
+                            bsz, horizon, hidden.size(-1)
+                        )
+                        act_h = hidden.gather(dim=1, index=gather_index)
+                        if (
+                            wrapper.future_injection is not None
+                            and future_mem is not None
+                            and not args.disable_future_injection
+                        ):
+                            act_h = wrapper.future_injection(act_h, future_mem)
+                        actions_pred = wrapper.action_head.sample(act_h, steps=args.flow_steps_eval)
+                    else:
+                        actions_pred, _ = wrapper(
+                            model_inputs=model_inputs,
+                            act_positions=act_positions,
+                            future_memory=future_mem,
+                            disable_future_injection=args.disable_future_injection,
+                        )
                 loss_action = torch.nn.functional.mse_loss(actions_pred, actions_gt)
                 val_action_losses.append(loss_action.item())
                 if use_text_loss and joint_text_loss and loss_text is not None:
