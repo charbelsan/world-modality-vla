@@ -1,7 +1,7 @@
 # World Modality Research Analysis
 
 **Date:** December 26, 2025
-**Status:** Phase B (Closed-loop evaluation) debugging + Phase C (Flow head) ready
+**Status:** Retraining required (instructions bug fixed); Phase C (Flow head) ready
 
 ---
 
@@ -28,196 +28,88 @@ Image → V-JEPA → z_current → Prophet → z_future (predicted)
 
 ---
 
-## 2. Current Experimental Results
+## 2. Root Cause: Why LIBERO Success Was 0%
 
-### Important Update: Why LIBERO success was 0% (even after eval fixes)
+Previous LLM-VLA experiments (E0/E2/E4) were trained with `--instruction_key instruction`.
 
-If you trained with `--instruction_key instruction` (the old launcher default), then **the model was trained with empty instructions**.
+In the LeRobot `HuggingFaceVLA/libero` dataset:
+- the task language string is provided under the key **`task`** (not `instruction`)
+- so `instruction_key=instruction` silently produced **empty strings** for every training sample
 
-Reason: in the LeRobot `HuggingFaceVLA/libero` dataset, the task language string is provided under the key **`task`**, not `instruction`. A task-agnostic policy will learn an “average” action distribution and typically gets **0% closed-loop success** even if offline MSE looks “reasonable”.
+Result:
+- all trained policies were effectively **task-agnostic**
+- **0% closed-loop success rate is expected**, even if offline action MSE looks “reasonable”
 
-Fix:
-- Train with `--instruction_key task` (and typically `--episode_id_key episode_index`).
-- `scripts/run_fplus_experiments.sh` now defaults to `INSTRUCTION_KEY=task` and errors loudly if the key is missing.
+This invalidates all prior SR conclusions. Training curves remain useful only as an offline-learning signal.
 
-### 2.1 Training Metrics Summary
-
-| Experiment | Epochs | Action Loss | World Loss | Gate | Status |
-|------------|--------|-------------|------------|------|--------|
-| **E0 v2** (Baseline) | 2/5 | 0.191 | N/A | 0.000 | Running |
-| **E2 v2** (World Memory) | 1/5 | 0.094 | 0.54 | -0.015 | Running |
-| **E4** (F+ with CoC) | 3/5 | 0.085 | 0.56 | -0.016 | Running |
-
-### 2.2 Action Loss Progression by Epoch
-
-| Epoch | E0 v2 (Baseline) | E2 v2 (World Memory) | Improvement |
-|-------|------------------|----------------------|-------------|
-| 0 | 0.197 | 0.136 | **31%** |
-| 1 | 0.192 | 0.094 | **51%** |
-| 2 | 0.191 | (in progress) | - |
-
-### 2.3 Old E2 (Complete 5 Epochs) - Reference
-
-| Epoch | Action Loss | World Loss | Trend |
-|-------|-------------|------------|-------|
-| 0 | 0.135 | 0.72 | - |
-| 1 | 0.118 | 0.65 | ↓ |
-| 2 | 0.102 | 0.58 | ↓ |
-| 3 | 0.085 | 0.54 | ↓ |
-| 4 | 0.068 | 0.51 | ↓ |
-
-**Observation:** Action loss continues to decrease through epoch 4, suggesting 5 epochs is appropriate.
+### Fixes merged
+- `world_modality/train_llm_vla.py` defaults now match LIBERO: `--image_key observation.images.image`, `--instruction_key task`, `--episode_id_key episode_index`.
+- `world_modality/llm_vla_dataset.py` now **raises** if the instruction key is missing (fail-fast, no silent empty text).
+- `scripts/run_fplus_experiments.sh` defaults now use `INSTRUCTION_KEY=task` and pass `EPISODE_ID_KEY=episode_index`.
 
 ---
 
-## 3. Key Findings
+## 3. What We Know (and What We Don’t)
 
-### 3.1 World Memory Provides Significant Benefit
+### Known
+- Adding Prophet + future-injection can strongly improve offline action MSE (task-agnostic runs already showed this trend).
+- Delta prediction (`z_{t+k} - z_t`) + temporal V-JEPA (`m=4`) makes the world-loss non-trivial and stabilizes Prophet learning.
 
-**At Epoch 1:**
-- E0 v2 (baseline): Action Loss = 0.192
-- E2 v2 (world memory): Action Loss = 0.094
-- **Improvement: 51%**
-
-This is statistically significant (p < 0.001 based on step-level variance).
-
-### 3.2 Gate Learns to Open
-
-The gating mechanism `act_h + tanh(gate) * future_ctx` shows:
-- E0 (no future injection): gate = 0.000 (frozen)
-- E2 (world memory): gate = -0.015 → tanh(-0.015) ≈ -0.015
-- E4 (F+ with CoC): gate = -0.016
-
-The negative gate indicates the model actively uses future context. The small magnitude suggests subtle but consistent influence.
-
-### 3.3 Delta Prediction Works
-
-Training Prophet to predict `δ = z_{t+k} - z_t` instead of `z_{t+k}`:
-- Addresses high cosine similarity between adjacent frames
-- World loss decreased from ~1.0 to ~0.55 (non-trivial prediction)
-- Enables meaningful future state learning
-
-### 3.4 Multi-Frame V-JEPA (m=4)
-
-Using 4-frame temporal context for V-JEPA encoding:
-- Latent dimension: 1408 (vs 1024 for single frame)
-- Captures motion dynamics better
-- Consistent improvement across experiments
+### Unknown (the real research question)
+- Does Model-F future memory improve **closed-loop LIBERO success rate** once the policy is truly instruction-conditioned?
+- Does changing the **action head** from MSE → Flow improve SR (common failure mode: MSE learns “mean actions”)?
 
 ---
 
-## 4. What We're Waiting For
+## 4. Next Step: Minimal, High-Signal Retraining Matrix
 
-### 4.1 Training Completion
+Run only what is needed to answer the question:
 
-| Experiment | Current | Target | ETA |
-|------------|---------|--------|-----|
-| E0 v2 | Epoch 2 (99%) | Epoch 5 | ~10h |
-| E2 v2 | Epoch 1 (60%) | Epoch 5 | ~14h |
-| E4 | Epoch 3 (95%) | Epoch 5 | ~8h |
+**E0 vs E2 × {MSE, Flow}**, skip E4 for now.
 
-### 4.2 LIBERO Evaluation
+| ID | Head | World Memory | Purpose |
+|----|------|--------------|---------|
+| E0-MSE | MSE | disabled | baseline sanity |
+| E2-MSE | MSE | enabled | does world help with MSE head? |
+| E0-Flow | Flow | disabled | does flow fix SR vs MSE? |
+| E2-Flow | Flow | enabled | main hypothesis test |
 
-Once training completes, we need GPU availability to run:
-```bash
-MUJOCO_GL=egl python -m world_modality.eval_libero \
-  --checkpoint logs_llm/E2_v2/llm_vla_epoch4.pt \
-  --suite libero_spatial \
-  --n_episodes 10
-```
+### Required settings (non-negotiable)
+- `IMAGE_KEY=observation.images.image`
+- `INSTRUCTION_KEY=task`
+- `EPISODE_ID_KEY=episode_index`
 
-**Critical:** Previous 0% success rate was due to:
-- LoRA weights not saved in checkpoint (fixed)
-- ACT embeddings not saved (fixed)
-- Wrong LoRA layers_pattern (fixed)
-- Prompt format mismatch (fixed)
+### Recommended world-latent config
+- `WORLD_SOURCE=vjepa`
+- `TEMPORAL_WINDOW=4` and `LATENT_SUFFIX=m4`
+- `DELTA_PREDICTION=1`
 
----
+### Run procedure (fast sanity → full)
+1) **Sanity**: run `MAX_EPOCHS=1` (or even 0.5 epoch) for E0-MSE and evaluate with `n_episodes=2`.
+   - If SR is still 0: debug prompt/text pipeline before spending more compute.
+2) If sanity SR is non-zero: run full 5 epochs for all four runs and evaluate with `n_episodes=10`.
 
-## 5. Expected Outcomes
-
-### 5.1 Training Predictions
-
-Based on old E2 trajectory (complete 5 epochs):
-
-| Epoch | E0 v2 (predicted) | E2 v2 (predicted) |
-|-------|-------------------|-------------------|
-| 3 | 0.188 | 0.078 |
-| 4 | 0.185 | 0.065 |
-| 5 | 0.183 | 0.055 |
-
-**Expected final improvement: ~70%** (action loss reduction)
-
-### 5.2 LIBERO Success Rate Predictions
-
-| Model | Expected Success Rate | Rationale |
-|-------|----------------------|-----------|
-| E0 v2 (baseline) | 15-25% | Standard VLA performance |
-| E2 v2 (world memory) | 25-40% | +50% relative improvement expected |
-| E4 (F+ CoC) | 30-45% | Best training metrics |
-
-**Conservative estimate:** E2 should outperform E0 by at least 5-10% absolute.
-
-### 5.3 Hypothesis Validation
-
-If E2 v2 > E0 v2 on LIBERO:
-- **Validates:** World model injection helps VLA
-- **Contribution:** Novel modality for robotics foundation models
-
-If E2 v2 ≈ E0 v2 on LIBERO:
-- Training metrics don't transfer to task success
-- May need different action head (flow-matching)
+### Evaluation correctness
+- LIBERO requires: init-state set before reset, 10 settle steps, image flip, and `env.check_success()`.
+- For Qwen3 backbone eval support + flow-head inference, use the evaluation script on the `phaseC-flow-head` branch.
 
 ---
 
-## 6. Next Research Steps
+## 5. Success Criteria
 
-### Phase B: Evaluation (Next 24-48h)
-
-1. **Complete current training runs**
-2. **Run LIBERO eval on E0 v2 vs E2 v2**
-3. **Ablation studies:**
-   - Oracle future vs predicted future
-   - Corruption analysis (zero/random/shuffle future memory)
-
-### Phase C: Flow-Matching Action Head (Future)
-
-Replace MSE loss with flow-matching for action prediction:
-
-```python
-# Current: MSE loss
-loss = F.mse_loss(pred_actions, target_actions)
-
-# Flow-matching: Learn denoising
-noise = torch.randn_like(target_actions)
-t = torch.rand(B, 1)
-noisy_actions = (1 - t) * noise + t * target_actions
-pred_velocity = flow_head(hidden, noisy_actions, t)
-loss = F.mse_loss(pred_velocity, target_actions - noise)
-```
-
-**Experiments:**
-| ID | Config | Purpose |
-|----|--------|---------|
-| E0-Flow | Baseline + Flow | Isolate flow-matching benefit |
-| E2-Flow | World Memory + Flow | Combined improvement |
-
-### Phase D: Scaling (If Phase B/C successful)
-
-1. **Larger backbone:** Qwen2.5-VL-7B
-2. **More diverse data:** Multiple LIBERO suites
-3. **Real robot transfer:** Bridge/RT-X datasets
+We declare progress only if these are true:
+- **Pipeline validity:** E0-MSE gets non-zero SR (>0%) after the instruction-key fix.
+- **Head validity:** E0-Flow ≥ E0-MSE on SR (flow should not be worse).
+- **World modality validity:** E2-Flow > E0-Flow on SR, and future-memory corruption degrades SR.
 
 ---
 
-## 7. Risk Analysis
-
-| Risk | Likelihood | Mitigation |
-|------|------------|------------|
-| Training MSE doesn't transfer to success | Medium | Flow-matching may help |
-| Eval bugs cause false negatives | Low | Extensive fixes applied |
-| GPU availability delays eval | Medium | Training nearly complete |
-| Gate too small to matter | Low | 51% improvement suggests impact |
+## 6. Risks / Debug Checklist (if SR is still 0 after the fix)
+- Confirm checkpoint config contains `instruction_key=task`.
+- Confirm prompts printed during training contain the task text (not empty).
+- Confirm eval uses the same backbone as training (Qwen3 vs Qwen2.5).
+- Confirm image flip is applied consistently (dataset convention).
+- Confirm action space matches env expectations (7-dim, clipped to [-1, 1]).
 
 ---
 
