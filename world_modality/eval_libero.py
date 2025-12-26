@@ -262,6 +262,9 @@ def load_wrapper_and_prophet(
     ).to(device)
     prophet.load_state_dict(ckpt["prophet_state_dict"])
     prophet.eval()
+    if device == "cuda":
+        wrapper = wrapper.half()
+        prophet = prophet.half()
     return wrapper, prophet
 
 
