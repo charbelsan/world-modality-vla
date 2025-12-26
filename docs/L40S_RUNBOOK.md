@@ -68,6 +68,9 @@ Environment overrides (optional):
 ```
 export BACKBONE=qwen3_vl_3b_instruct
 export WORLD_SOURCE=vjepa   # or dino
+export TEMPORAL_WINDOW=4    # vjepa only (1=single-frame, 4=recommended)
+export LATENT_SUFFIX=m4     # must match TEMPORAL_WINDOW (m4 -> 4 frames/clip)
+export DELTA_PREDICTION=1   # recommended for vjepa (predict z_{t+k}-z_t)
 export BATCH_SIZE=8
 export MAX_EPOCHS=5
 export LOG_EVERY=50
@@ -81,8 +84,8 @@ export FLOW_STEPS_EVAL=8
 ```
 
 ### 6) Outputs
-- Latents: `cache/<dataset>/train_world_latents_<source>.fp16.npy`
-- Checkpoints: `logs_llm/E*/llm_vla_epoch*.pt`
+- Latents: `cache/<dataset>/train_world_latents_<source>[_<latent_suffix>].fp16.npy`
+- Checkpoints: `logs_llm/E*_<tag>/llm_vla_epoch*.pt` (tag includes world source, latent suffix, delta on/off, head type)
 
 ### 7) Common blockers
 - Qwen3-VL load fails: upgrade transformers or set `BACKBONE=qwen2_5_vl_3b_instruct`.

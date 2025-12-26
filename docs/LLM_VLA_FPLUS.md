@@ -69,8 +69,13 @@ python -m world_modality.precompute_world_latents \
   --dataset_name HuggingFaceVLA/libero \
   --image_key observation.images.image \
   --world_latents_source vjepa \
-  --cache_dir cache
+  --cache_dir cache \
+  --temporal_window 4
 ```
+Then train with `--latent_suffix m4` so the trainer loads the `_m4` cache file.
+
+Recommended for V-JEPA: also pass `--delta_prediction` so Prophet learns
+`z_{t+k} - z_t` rather than copying near-invariant latents.
 
 ### Experiment matrix (E0-E4)
 Default runs (in launcher):
@@ -103,6 +108,8 @@ For a zero-ambiguity setup, see `docs/L40S_RUNBOOK.md`.
 Environment variables (optional):
 - DATASET, IMAGE_KEY, INSTRUCTION_KEY, EPISODE_ID_KEY, CACHE_DIR
 - WORLD_SOURCE (dino or vjepa)
+- TEMPORAL_WINDOW (vjepa only), LATENT_SUFFIX (e.g., m4), DELTA_PREDICTION (0/1)
 - BACKBONE (default: qwen3_vl_3b_instruct)
 - BATCH_SIZE, MAX_EPOCHS, LOG_EVERY
+- ACTION_HEAD (mse or flow), FLOW_STEPS_EVAL
 - COC_JSONL (required for E4)
