@@ -713,12 +713,26 @@ def main():
 
             if global_step % args.log_every == 0:
                 gate = wrapper.gate_value()
-                print(
-                    f"[Epoch {epoch} Step {global_step}] "
-                    f"loss={loss.item():.4f} action={loss_action.item():.4f} "
-                    f"world={loss_world.item():.4f} text={loss_text.item():.4f} gate={gate:.4f}",
-                    flush=True
-                )
+                if is_flow:
+                    with torch.no_grad():
+                        actions_sampled = wrapper.action_head.sample(act_h, steps=args.flow_steps_eval)
+                        train_action_mse = torch.nn.functional.mse_loss(
+                            actions_sampled, actions_gt
+                        ).item()
+                    print(
+                        f"[Epoch {epoch} Step {global_step}] "
+                        f"loss={loss.item():.4f} flow={loss_action.item():.4f} "
+                        f"act_mse={train_action_mse:.4f} world={loss_world.item():.4f} "
+                        f"text={loss_text.item():.4f} gate={gate:.4f}",
+                        flush=True,
+                    )
+                else:
+                    print(
+                        f"[Epoch {epoch} Step {global_step}] "
+                        f"loss={loss.item():.4f} action={loss_action.item():.4f} "
+                        f"world={loss_world.item():.4f} text={loss_text.item():.4f} gate={gate:.4f}",
+                        flush=True,
+                    )
             global_step += 1
             if global_step == 1:
                 print(f"[Training] First step completed", flush=True)
