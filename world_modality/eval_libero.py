@@ -148,6 +148,13 @@ def load_checkpoint_config(checkpoint_path: str):
     return ckpt["config"], ckpt["act_tokens"], ckpt
 
 
+def load_vjepa_encoder(model_name: str, device: str):
+    """Load V-JEPA encoder for computing world latents at eval time."""
+    from world_modality.vision import VisionEncoder
+    encoder = VisionEncoder(model_name=model_name, device=device, dtype="float16")
+    return encoder
+
+
 def load_policy(checkpoint_path: str, vlm, device: str, ckpt: dict, disable_future_injection: bool = False):
     """Load LLM-VLA policy from checkpoint."""
     from world_modality.llm_vla_policy import QwenVLAWrapper, ActionHeadMLP
@@ -229,21 +236,77 @@ def run_episode(
     max_steps: int,
     corruption_mode: str = "none",
     disable_future_injection: bool = False,
+    vjepa_encoder=None,
+    delta_prediction: bool = True,
+    temporal_frames: int = 4,
 ):
     """Run single episode, return success.
 
-    Note: For simplicity, this version disables future injection during eval.
-    Full Prophet-based eval requires V-JEPA encoder which adds complexity.
+    When future injection is enabled:
+    1. Track last `temporal_frames` frames in history
+    2. Encode with V-JEPA to get current world latent z_t
+    3. Use Prophet to predict future delta
+    4. Add z_t to get predicted future z_{t+k}
+    5. Pass to wrapper as future_memory
     """
     from world_modality.llm_vla_policy import find_act_positions
 
-    obs = env.reset()
+    # CRITICAL: set_init_state BEFORE reset (LeRobot convention)
     env.set_init_state(init_state)
+    obs = env.reset()
+
+    # CRITICAL: No-op steps after reset to let physics settle (LeRobot does 10 steps)
+    dummy_action = np.array([0, 0, 0, 0, 0, 0, -1], dtype=np.float64)  # 7-dim, gripper closed
+    for _ in range(10):
+        obs, _, _, _ = env.step(dummy_action)
+
+    # Track frame history for temporal encoding
+    frame_history = []
 
     for step in range(max_steps):
         # Get image observation
         img = obs["agentview_image"]  # (H, W, 3) uint8
+        # CRITICAL: Flip 180° to match HuggingFaceVLA/libero dataset convention
+        img = img[::-1, ::-1].copy()  # Flip both H and W
         pil_img = Image.fromarray(img)
+
+        # Update frame history
+        frame_tensor = torch.from_numpy(img).permute(2, 0, 1)  # [C, H, W]
+        frame_history.append(frame_tensor)
+        if len(frame_history) > temporal_frames:
+            frame_history.pop(0)
+
+        # Compute future memory if enabled
+        future_memory = None
+        if not disable_future_injection and vjepa_encoder is not None and len(frame_history) >= temporal_frames:
+            # Stack last m frames: [1, m, C, H, W]
+            frames = torch.stack(frame_history[-temporal_frames:], dim=0).unsqueeze(0)
+
+            # Encode with V-JEPA temporal
+            z_current = vjepa_encoder.encode_temporal(frames)  # [1, D]
+
+            # Use Prophet to predict future
+            z_current_expanded = z_current.unsqueeze(1)  # [1, 1, D] for Prophet
+            z_pred = prophet(z_current_expanded)  # [1, K, D] delta prediction
+
+            # For delta prediction, add z_current to get absolute
+            # z_current is [1, D], z_pred is [1, K, D] - broadcast over K
+            if delta_prediction:
+                z_pred_absolute = z_current.unsqueeze(1) + z_pred  # [1, K, D]
+            else:
+                z_pred_absolute = z_pred  # [1, K, D]
+
+            # Apply corruption if requested
+            if corruption_mode == "zero":
+                z_pred_absolute = torch.zeros_like(z_pred_absolute)
+            elif corruption_mode == "random":
+                z_pred_absolute = torch.randn_like(z_pred_absolute)
+            elif corruption_mode == "shuffle":
+                # Shuffle within batch (no effect for B=1, but valid)
+                idx = torch.randperm(z_pred_absolute.shape[0])
+                z_pred_absolute = z_pred_absolute[idx]
+
+            future_memory = z_pred_absolute  # [1, K, D]
 
         # Build prompt (same format as training)
         prompt = build_prompt(instruction, act_tokens, processor)
@@ -261,12 +324,12 @@ def run_episode(
         act_positions = find_act_positions(inputs["input_ids"], act_token_ids)
         act_positions = act_positions.to(device)
 
-        # Forward through wrapper (without future memory for now)
+        # Forward through wrapper
         actions, _ = wrapper(
             model_inputs=inputs,
             act_positions=act_positions,
-            future_memory=None,  # Disable future injection for baseline eval
-            disable_future_injection=True,  # Force disable
+            future_memory=future_memory,
+            disable_future_injection=disable_future_injection,
         )
 
         # Get first action (actions is [B, H, action_dim])
@@ -274,7 +337,8 @@ def run_episode(
 
         # Debug: print action stats for first few steps
         if step < 3:
-            print(f"  Step {step}: action_raw = {action}, min={action.min():.3f}, max={action.max():.3f}")
+            fm_status = "with_future" if future_memory is not None else "no_future"
+            print(f"  Step {step} ({fm_status}): action = {action}, min={action.min():.3f}, max={action.max():.3f}")
 
         # Clip action to valid range
         action = np.clip(action, -1.0, 1.0)
@@ -282,8 +346,8 @@ def run_episode(
         # Step environment
         obs, reward, done, info = env.step(action)
 
-        # Check success
-        if info.get("is_success", False):
+        # CRITICAL: Use env.check_success() - info dict doesn't reliably have is_success
+        if env.check_success():
             return True, step + 1
 
         if done:
@@ -318,6 +382,18 @@ def main():
     # Get ACT token IDs (should work now since tokens were added)
     act_token_ids = processor.tokenizer.convert_tokens_to_ids(act_tokens)
     print(f"ACT tokens: {act_tokens[:3]}... -> IDs: {act_token_ids[:3]}...")
+
+    # Load V-JEPA encoder if future injection is enabled
+    vjepa_encoder = None
+    if not args.disable_future_injection:
+        print(f"Loading V-JEPA encoder for future memory...")
+        vjepa_model = "facebook/vjepa2-vitg-fpc64-256"
+        vjepa_encoder = load_vjepa_encoder(vjepa_model, args.device)
+
+    # Get delta_prediction and temporal_frames from config
+    delta_prediction = config.get("delta_prediction", True)
+    temporal_frames = 4 if "m4" in config.get("latent_suffix", "m4") else 1
+    print(f"Delta prediction: {delta_prediction}, Temporal frames: {temporal_frames}")
 
     # Load benchmark
     print(f"Loading LIBERO suite: {args.suite}")
@@ -370,6 +446,9 @@ def main():
                 max_steps=args.max_steps,
                 corruption_mode=args.corruption_mode,
                 disable_future_injection=args.disable_future_injection,
+                vjepa_encoder=vjepa_encoder,
+                delta_prediction=delta_prediction,
+                temporal_frames=temporal_frames,
             )
 
             task_results.append({"episode": ep_idx, "success": success, "steps": steps})
