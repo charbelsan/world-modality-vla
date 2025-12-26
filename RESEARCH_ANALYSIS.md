@@ -1,7 +1,7 @@
 # World Modality Research Analysis
 
-**Date:** December 25, 2024
-**Status:** Phase A (Training) in progress, Phase B (Evaluation) pending
+**Date:** December 26, 2025
+**Status:** Phase B (Closed-loop evaluation) debugging + Phase C (Flow head) ready
 
 ---
 
@@ -29,6 +29,16 @@ Image → V-JEPA → z_current → Prophet → z_future (predicted)
 ---
 
 ## 2. Current Experimental Results
+
+### Important Update: Why LIBERO success was 0% (even after eval fixes)
+
+If you trained with `--instruction_key instruction` (the old launcher default), then **the model was trained with empty instructions**.
+
+Reason: in the LeRobot `HuggingFaceVLA/libero` dataset, the task language string is provided under the key **`task`**, not `instruction`. A task-agnostic policy will learn an “average” action distribution and typically gets **0% closed-loop success** even if offline MSE looks “reasonable”.
+
+Fix:
+- Train with `--instruction_key task` (and typically `--episode_id_key episode_index`).
+- `scripts/run_fplus_experiments.sh` now defaults to `INSTRUCTION_KEY=task` and errors loudly if the key is missing.
 
 ### 2.1 Training Metrics Summary
 
