@@ -95,6 +95,16 @@ Expected:
 - Oracle helps early.
 - Corruption hurts as gate opens.
 
+### LIBERO success-rate evaluation
+Use `world_modality/eval_libero.py` to run closed-loop rollouts and report success rate:
+```
+python -m world_modality.eval_libero \
+  --checkpoint logs_llm/E2_model_f_vjepa_m4_delta_mse/llm_vla_epoch4.pt \
+  --suite libero_spatial \
+  --n_episodes 10 \
+  --libero_root /home/ubuntu/LIBERO
+```
+
 ### Notes from SmolVLA to borrow (principles)
 - Keep the model small and efficient.
 - Reduce token pressure and avoid bloated prompts.

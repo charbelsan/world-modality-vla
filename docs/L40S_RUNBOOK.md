@@ -91,3 +91,22 @@ export FLOW_STEPS_EVAL=8
 - Qwen3-VL load fails: upgrade transformers or set `BACKBONE=qwen2_5_vl_3b_instruct`.
 - CoC JSONL missing: E4 is skipped (E0/E2 still run).
 - V-JEPA slow: use `WORLD_SOURCE=dino` to validate plumbing first.
+
+### 8) LIBERO success-rate eval
+Requires a LIBERO checkout (or install) on the box. If you have a local clone:
+```
+export LIBERO_ROOT=/home/ubuntu/LIBERO
+```
+
+Run:
+```
+python -m world_modality.eval_libero \
+  --checkpoint logs_llm/E2_model_f_vjepa_m4_delta_mse/llm_vla_epoch4.pt \
+  --suite libero_spatial \
+  --n_episodes 10 \
+  --libero_root "$LIBERO_ROOT"
+```
+
+Reliance tests:
+- Disable future memory: add `--disable_future_injection`
+- Corrupt memory: add `--corruption_mode {zero,random,shuffle}`
