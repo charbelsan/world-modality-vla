@@ -26,6 +26,16 @@ if [[ "${WORLD_SOURCE}" == "dino" && "${TEMPORAL_WINDOW}" != "1" ]]; then
   exit 2
 fi
 
+if [[ -n "${LATENT_SUFFIX}" && "${LATENT_SUFFIX}" =~ ^m[0-9]+$ ]]; then
+  SUFFIX_M=${LATENT_SUFFIX#m}
+  if [[ "${TEMPORAL_WINDOW}" == "1" ]]; then
+    TEMPORAL_WINDOW="${SUFFIX_M}"
+  elif [[ "${TEMPORAL_WINDOW}" != "${SUFFIX_M}" ]]; then
+    echo "ERROR: LATENT_SUFFIX=${LATENT_SUFFIX} implies TEMPORAL_WINDOW=${SUFFIX_M}, but TEMPORAL_WINDOW=${TEMPORAL_WINDOW}."
+    exit 2
+  fi
+fi
+
 if [[ "${TEMPORAL_WINDOW}" != "1" && -z "${LATENT_SUFFIX}" ]]; then
   LATENT_SUFFIX="m${TEMPORAL_WINDOW}"
 fi
