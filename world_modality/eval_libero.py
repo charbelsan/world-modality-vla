@@ -81,6 +81,11 @@ def parse_args():
         default=0,
         help="If >0, override flow sampling steps at inference.",
     )
+    p.add_argument(
+        "--binarize_gripper",
+        action="store_true",
+        help="Threshold gripper action to -1/+1 (useful for MSE-trained models).",
+    )
     return p.parse_args()
 
 
@@ -287,6 +292,7 @@ def run_episode(
     context_frames: int,
     delta_prediction: bool,
     use_chat_template: bool,
+    binarize_gripper: bool = False,
 ):
     from world_modality.llm_vla_policy import find_act_positions
 
@@ -362,6 +368,9 @@ def run_episode(
         )
         action = actions[0, 0].detach().cpu().numpy()
         action = np.clip(action, -1.0, 1.0)
+        # Binarize gripper (last dim) if requested - helps MSE-trained models.
+        if binarize_gripper:
+            action[-1] = 1.0 if action[-1] > 0 else -1.0
         obs, _, done, info = env.step(action)
         # LIBERO does not reliably expose success in info; use check_success().
         if env.check_success():
@@ -481,6 +490,7 @@ def main():
                 context_frames=context_frames,
                 delta_prediction=delta_prediction,
                 use_chat_template=use_chat_template,
+                binarize_gripper=args.binarize_gripper,
             )
             successes += int(ok)
 
