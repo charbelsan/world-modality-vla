@@ -48,6 +48,13 @@ def parse_args():
     )
     p.add_argument("--trust_remote_code", action="store_true")
     p.add_argument(
+        "--wrist_mode",
+        type=str,
+        default="auto",
+        choices=["auto", "none", "concat"],
+        help="How to use wrist camera at eval time. 'auto' follows the checkpoint config.",
+    )
+    p.add_argument(
         "--libero_root",
         type=str,
         default="",
@@ -130,6 +137,21 @@ def _infer_temporal_window(latent_suffix: str) -> int:
     if s.startswith("m") and s[1:].isdigit():
         return int(s[1:])
     return 1
+
+
+def _quat2axisangle(quat: np.ndarray) -> np.ndarray:
+    """Convert quaternion (x,y,z,w) to axis-angle (3)."""
+    quat = np.asarray(quat).reshape(-1)
+    if quat.shape[0] != 4:
+        raise ValueError(f"Expected quaternion shape (4,), got {quat.shape}")
+    x, y, z, w = float(quat[0]), float(quat[1]), float(quat[2]), float(quat[3])
+    w = max(-1.0, min(1.0, w))
+    den = max(0.0, 1.0 - w * w) ** 0.5
+    if den < 1e-10:
+        return np.zeros((3,), dtype=np.float32)
+    angle = 2.0 * float(np.arccos(w))
+    axis = np.array([x, y, z], dtype=np.float32) / float(den)
+    return axis * angle
 
 
 def _build_prompt(instruction: str, act_tokens: list, processor, use_chat_template: bool) -> str:
@@ -249,12 +271,16 @@ def load_wrapper_and_prophet(
         horizon=horizon,
         future_dim=latent_dim,
         enable_future_injection=not disable_future_injection,
+        enable_proprio=bool(config.get("use_proprio", False)),
+        proprio_dim=int(config.get("proprio_dim", 8)),
         action_head_type=action_head_type,
         flow_steps=flow_steps,
     ).to(device)
     wrapper.action_head.load_state_dict(ckpt["action_head_state_dict"])
     if not disable_future_injection and ckpt.get("future_injection_state_dict") is not None:
         wrapper.future_injection.load_state_dict(ckpt["future_injection_state_dict"])
+    if wrapper.proprio_conditioner is not None and ckpt.get("proprio_conditioner_state_dict") is not None:
+        wrapper.proprio_conditioner.load_state_dict(ckpt["proprio_conditioner_state_dict"])
     wrapper.eval()
 
     prophet = Prophet(
@@ -292,6 +318,8 @@ def run_episode(
     context_frames: int,
     delta_prediction: bool,
     use_chat_template: bool,
+    use_proprio: bool,
+    wrist_mode: str,
     binarize_gripper: bool = False,
 ):
     from world_modality.llm_vla_policy import find_act_positions
@@ -339,12 +367,37 @@ def run_episode(
         img = obs["agentview_image"]  # (H, W, 3) uint8
         # Match HuggingFaceVLA/libero camera convention: 180° flip (H and W).
         img = img[::-1, ::-1].copy()
+        if wrist_mode == "concat":
+            wrist = obs.get("robot0_eye_in_hand_image", None)
+            if wrist is None:
+                raise KeyError("wrist_mode=concat but env did not provide robot0_eye_in_hand_image.")
+            wrist = wrist[::-1, ::-1].copy()
+            img = np.concatenate([img, wrist], axis=1)
         pil_img = Image.fromarray(img)
         prompt = _build_prompt(instruction, act_tokens, processor, use_chat_template=use_chat_template)
         inputs = processor(text=[prompt], images=[pil_img], return_tensors="pt", padding=True)
         inputs = {k: v.to(device) for k, v in inputs.items()}
 
         act_positions = find_act_positions(inputs["input_ids"], act_token_ids).to(device)
+
+        proprio = None
+        if use_proprio and wrapper.proprio_conditioner is not None:
+            eef_pos = obs.get("robot0_eef_pos")
+            eef_quat = obs.get("robot0_eef_quat")
+            gripper_qpos = obs.get("robot0_gripper_qpos")
+            if eef_pos is None or eef_quat is None or gripper_qpos is None:
+                raise KeyError("Missing required proprio fields in env obs (robot0_eef_pos/eef_quat/gripper_qpos).")
+            axisangle = _quat2axisangle(eef_quat)
+            state = np.concatenate(
+                [
+                    np.asarray(eef_pos).reshape(-1),
+                    axisangle.reshape(-1),
+                    np.asarray(gripper_qpos).reshape(-1),
+                ],
+                axis=0,
+            )
+            dtype = torch.float16 if device == "cuda" else torch.float32
+            proprio = torch.from_numpy(state.astype(np.float32)).unsqueeze(0).to(device=device, dtype=dtype)
 
         future_mem = None
         if not disable_future_injection:
@@ -372,6 +425,7 @@ def run_episode(
             model_inputs=inputs,
             act_positions=act_positions,
             future_memory=future_mem,
+            proprio=proprio,
             disable_future_injection=disable_future_injection,
         )
         action = actions[0, 0].detach().cpu().numpy()
@@ -461,6 +515,14 @@ def main():
 
     context_frames = int(config.get("context_frames", 3))
     delta_prediction = bool(config.get("delta_prediction", False))
+    use_proprio = bool(config.get("use_proprio", False))
+    wrist_mode = args.wrist_mode
+    if wrist_mode == "auto":
+        wrist_mode = str(config.get("wrist_mode", "none"))
+    if wrist_mode not in ("none", "concat"):
+        print(f"WARNING: unsupported wrist_mode={wrist_mode!r}; forcing 'none'", flush=True)
+        wrist_mode = "none"
+    print(f"[Eval] use_proprio={use_proprio} wrist_mode={wrist_mode}", flush=True)
 
     per_task = []
     for task_idx in range(n_tasks):
@@ -498,6 +560,8 @@ def main():
                 context_frames=context_frames,
                 delta_prediction=delta_prediction,
                 use_chat_template=use_chat_template,
+                use_proprio=use_proprio,
+                wrist_mode=wrist_mode,
                 binarize_gripper=args.binarize_gripper,
             )
             successes += int(ok)

@@ -10,6 +10,7 @@ from torch.optim import AdamW
 from torch.utils.data import DataLoader
 
 from transformers import AutoModelForVision2Seq, AutoProcessor
+from PIL import Image
 
 from .config import DataConfig
 from .device import resolve_device
@@ -23,6 +24,20 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Train Qwen VLM + action head + world memory (Model F-style).")
     p.add_argument("--dataset_name", type=str, default="HuggingFaceVLA/libero")
     p.add_argument("--image_key", type=str, default="observation.images.image")
+    p.add_argument("--wrist_image_key", type=str, default="observation.images.image2")
+    p.add_argument(
+        "--wrist_mode",
+        type=str,
+        default="none",
+        choices=["none", "concat"],
+        help="How to use wrist camera during training. 'concat' concatenates agentview and wrist into one image.",
+    )
+    p.add_argument("--proprio_key", type=str, default="observation.state")
+    p.add_argument(
+        "--use_proprio",
+        action="store_true",
+        help="Condition the policy on proprioception (LIBERO: observation.state, 8-dim).",
+    )
     p.add_argument("--instruction_key", type=str, default="task")
     p.add_argument("--action_key", type=str, default="action")
     p.add_argument("--episode_id_key", type=str, default="episode_index")
@@ -200,6 +215,7 @@ def build_dataloaders(args, processor, act_tokens: List[str], use_text_loss: boo
     cfg = DataConfig(
         dataset_name=args.dataset_name,
         image_key=args.image_key,
+        proprio_key=args.proprio_key if args.use_proprio else "",
         instruction_key=args.instruction_key,
         action_key=args.action_key,
         episode_id_key=args.episode_id_key,
@@ -216,6 +232,9 @@ def build_dataloaders(args, processor, act_tokens: List[str], use_text_loss: boo
         cfg,
         split="train",
         world_latents_source=args.world_latents_source,
+        wrist_image_key=args.wrist_image_key if args.wrist_mode != "none" else None,
+        require_proprio=bool(args.use_proprio),
+        require_wrist=bool(args.wrist_mode != "none"),
         coc_jsonl=args.coc_jsonl if use_text_loss else None,
         require_coc=bool(use_text_loss and args.require_coc),
     )
@@ -223,6 +242,9 @@ def build_dataloaders(args, processor, act_tokens: List[str], use_text_loss: boo
         cfg,
         split="val",
         world_latents_source=args.world_latents_source,
+        wrist_image_key=args.wrist_image_key if args.wrist_mode != "none" else None,
+        require_proprio=bool(args.use_proprio),
+        require_wrist=bool(args.wrist_mode != "none"),
         coc_jsonl=args.coc_jsonl if use_text_loss else None,
         require_coc=bool(use_text_loss and args.require_coc),
     )
@@ -230,7 +252,20 @@ def build_dataloaders(args, processor, act_tokens: List[str], use_text_loss: boo
     act_token_ids = processor.tokenizer.convert_tokens_to_ids(act_tokens)
 
     def collate(batch: List[Dict]) -> Dict[str, torch.Tensor]:
+        def _concat_images(left, right):
+            if left.size[1] != right.size[1]:
+                right = right.resize((right.size[0], left.size[1]))
+            out = Image.new("RGB", (left.size[0] + right.size[0], left.size[1]))
+            out.paste(left, (0, 0))
+            out.paste(right, (left.size[0], 0))
+            return out
+
         images = [b["image"] for b in batch]
+        if args.wrist_mode == "concat":
+            wrist_images = [b["wrist_image"] for b in batch]
+            if any(w is None for w in wrist_images):
+                raise ValueError("wrist_mode=concat but at least one sample is missing wrist_image.")
+            images = [_concat_images(img, wrist) for img, wrist in zip(images, wrist_images)]
         if use_text_loss and args.text_loss_mode == "joint_after_act":
             base_texts = [
                 build_prompt(b["instruction"], act_tokens, use_chat_template=use_chat_template) for b in batch
@@ -333,6 +368,11 @@ def build_dataloaders(args, processor, act_tokens: List[str], use_text_loss: boo
             "z_hist": z_hist,
             "z_future": z_future,
         }
+        if args.use_proprio:
+            proprios = [b["proprio"] for b in batch]
+            if any(p is None for p in proprios):
+                raise ValueError("--use_proprio set but at least one sample is missing proprio.")
+            out["proprio"] = torch.stack([p for p in proprios], dim=0)
         if use_text_loss:
             if args.text_loss_mode == "joint_after_act":
                 out["text_labels"] = labels
@@ -495,6 +535,11 @@ def main():
     z_hist = sample["z_hist"]
     action_dim = int(actions.shape[-1])
     latent_dim = int(z_hist.shape[-1])
+    proprio_dim = 0
+    if args.use_proprio:
+        if "proprio" not in sample:
+            raise ValueError("--use_proprio was set but the dataloader did not provide 'proprio'.")
+        proprio_dim = int(sample["proprio"].shape[-1])
 
     # Prophet + policy wrapper.
     prophet = Prophet(
@@ -515,6 +560,8 @@ def main():
         horizon=args.action_horizon,
         future_dim=latent_dim,
         enable_future_injection=not args.disable_future_injection,
+        enable_proprio=bool(args.use_proprio),
+        proprio_dim=proprio_dim,
         action_head_type=args.action_head,
         flow_steps=args.flow_steps_eval,
     ).to(device, dtype=dtype)
@@ -552,6 +599,12 @@ def main():
                 wrapper.future_injection.load_state_dict(resume_ckpt["future_injection_state_dict"])
                 print("[Resume] Loaded future injection", flush=True)
 
+        # Load proprio conditioner if present
+        if wrapper.proprio_conditioner is not None and "proprio_conditioner_state_dict" in resume_ckpt:
+            if resume_ckpt["proprio_conditioner_state_dict"] is not None:
+                wrapper.proprio_conditioner.load_state_dict(resume_ckpt["proprio_conditioner_state_dict"])
+                print("[Resume] Loaded proprio conditioner", flush=True)
+
         # Determine start epoch from checkpoint filename (e.g., llm_vla_epoch0.pt -> start at epoch 1)
         import re
         match = re.search(r"epoch(\d+)\.pt$", args.resume_from)
@@ -562,6 +615,8 @@ def main():
     params = list(wrapper.action_head.parameters()) + list(prophet.parameters())
     if wrapper.future_injection is not None:
         params += list(wrapper.future_injection.parameters())
+    if wrapper.proprio_conditioner is not None:
+        params += list(wrapper.proprio_conditioner.parameters())
     if not args.freeze_backbone:
         params += list(wrapper.vlm.parameters())
     optimizer = AdamW(params, lr=args.learning_rate, weight_decay=args.weight_decay)
@@ -592,6 +647,9 @@ def main():
             actions_gt = batch["actions"].to(device, dtype=dtype)
             z_hist = batch["z_hist"].to(device, dtype=dtype)
             z_future = batch["z_future"].to(device, dtype=dtype)
+            proprio = None
+            if args.use_proprio:
+                proprio = batch["proprio"].to(device, dtype=dtype)
 
             # z_current: last frame of history for delta prediction
             z_current = z_hist[:, -1:, :]  # [B, 1, D]
@@ -640,6 +698,8 @@ def main():
                 bsz, horizon = act_positions.shape
                 gather_index = act_positions.unsqueeze(-1).expand(bsz, horizon, hidden.size(-1))
                 act_h = hidden.gather(dim=1, index=gather_index)
+                if wrapper.proprio_conditioner is not None and proprio is not None:
+                    act_h = wrapper.proprio_conditioner(act_h, proprio)
                 if (
                     wrapper.future_injection is not None
                     and future_mem is not None
@@ -674,6 +734,8 @@ def main():
                     bsz, horizon = act_positions.shape
                     gather_index = act_positions.unsqueeze(-1).expand(bsz, horizon, hidden.size(-1))
                     act_h = hidden.gather(dim=1, index=gather_index)
+                    if wrapper.proprio_conditioner is not None and proprio is not None:
+                        act_h = wrapper.proprio_conditioner(act_h, proprio)
                     if (
                         wrapper.future_injection is not None
                         and future_mem is not None
@@ -686,6 +748,7 @@ def main():
                         model_inputs=model_inputs,
                         act_positions=act_positions,
                         future_memory=future_mem,
+                        proprio=proprio,
                         disable_future_injection=args.disable_future_injection,
                     )
                 loss_action = torch.nn.functional.mse_loss(actions_pred, actions_gt)
@@ -713,6 +776,7 @@ def main():
 
             if global_step % args.log_every == 0:
                 gate = wrapper.gate_value()
+                p_gate = wrapper.proprio_gate_value()
                 if is_flow:
                     with torch.no_grad():
                         actions_sampled = wrapper.action_head.sample(act_h, steps=args.flow_steps_eval)
@@ -723,14 +787,15 @@ def main():
                         f"[Epoch {epoch} Step {global_step}] "
                         f"loss={loss.item():.4f} flow={loss_action.item():.4f} "
                         f"act_mse={train_action_mse:.4f} world={loss_world.item():.4f} "
-                        f"text={loss_text.item():.4f} gate={gate:.4f}",
+                        f"text={loss_text.item():.4f} gate={gate:.4f} proprio_gate={p_gate:.4f}",
                         flush=True,
                     )
                 else:
                     print(
                         f"[Epoch {epoch} Step {global_step}] "
                         f"loss={loss.item():.4f} action={loss_action.item():.4f} "
-                        f"world={loss_world.item():.4f} text={loss_text.item():.4f} gate={gate:.4f}",
+                        f"world={loss_world.item():.4f} text={loss_text.item():.4f} "
+                        f"gate={gate:.4f} proprio_gate={p_gate:.4f}",
                         flush=True,
                     )
             global_step += 1
@@ -750,6 +815,9 @@ def main():
                 actions_gt = batch["actions"].to(device, dtype=dtype)
                 z_hist = batch["z_hist"].to(device, dtype=dtype)
                 z_future = batch["z_future"].to(device, dtype=dtype)
+                proprio = None
+                if args.use_proprio:
+                    proprio = batch["proprio"].to(device, dtype=dtype)
 
                 z_current = z_hist[:, -1:, :]  # [B, 1, D]
                 z_pred = prophet(z_hist)
@@ -793,6 +861,8 @@ def main():
                     bsz, horizon = act_positions.shape
                     gather_index = act_positions.unsqueeze(-1).expand(bsz, horizon, hidden.size(-1))
                     act_h = hidden.gather(dim=1, index=gather_index)
+                    if wrapper.proprio_conditioner is not None and proprio is not None:
+                        act_h = wrapper.proprio_conditioner(act_h, proprio)
                     if (
                         wrapper.future_injection is not None
                         and future_mem is not None
@@ -816,6 +886,8 @@ def main():
                             bsz, horizon, hidden.size(-1)
                         )
                         act_h = hidden.gather(dim=1, index=gather_index)
+                        if wrapper.proprio_conditioner is not None and proprio is not None:
+                            act_h = wrapper.proprio_conditioner(act_h, proprio)
                         if (
                             wrapper.future_injection is not None
                             and future_mem is not None
@@ -828,6 +900,7 @@ def main():
                             model_inputs=model_inputs,
                             act_positions=act_positions,
                             future_memory=future_mem,
+                            proprio=proprio,
                             disable_future_injection=args.disable_future_injection,
                         )
                 loss_action = torch.nn.functional.mse_loss(actions_pred, actions_gt)
@@ -844,13 +917,15 @@ def main():
 
         mean_val = float(sum(val_action_losses) / max(1, len(val_action_losses)))
         gate = wrapper.gate_value()
+        p_gate = wrapper.proprio_gate_value()
         if use_text_loss and val_text_losses:
             mean_text = float(sum(val_text_losses) / max(1, len(val_text_losses)))
             print(
-                f"[Epoch {epoch}] VAL action MSE={mean_val:.6f} text={mean_text:.6f} gate={gate:.4f}"
+                f"[Epoch {epoch}] VAL action MSE={mean_val:.6f} text={mean_text:.6f} "
+                f"gate={gate:.4f} proprio_gate={p_gate:.4f}"
             )
         else:
-            print(f"[Epoch {epoch}] VAL action MSE={mean_val:.6f} gate={gate:.4f}")
+            print(f"[Epoch {epoch}] VAL action MSE={mean_val:.6f} gate={gate:.4f} proprio_gate={p_gate:.4f}")
 
         # Save checkpoint per epoch.
         ckpt = {
@@ -860,6 +935,9 @@ def main():
             "prophet_state_dict": prophet.state_dict(),
             "future_injection_state_dict": (
                 wrapper.future_injection.state_dict() if wrapper.future_injection is not None else None
+            ),
+            "proprio_conditioner_state_dict": (
+                wrapper.proprio_conditioner.state_dict() if wrapper.proprio_conditioner is not None else None
             ),
         }
 

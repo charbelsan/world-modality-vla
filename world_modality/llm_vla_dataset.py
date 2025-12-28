@@ -56,6 +56,9 @@ class LiberoVLADataset(Dataset):
         cfg: DataConfig,
         split: str = "train",
         world_latents_source: str = "dino",
+        wrist_image_key: Optional[str] = None,
+        require_proprio: bool = False,
+        require_wrist: bool = False,
         coc_jsonl: Optional[str] = None,
         require_coc: bool = False,
         train_val_split: float = 0.9,
@@ -67,6 +70,10 @@ class LiberoVLADataset(Dataset):
         self.split = split
         self.train_val_split = train_val_split
         self.dataset = LeRobotDataset(cfg.dataset_name)
+
+        self.wrist_image_key = wrist_image_key
+        self.require_proprio = bool(require_proprio)
+        self.require_wrist = bool(require_wrist and wrist_image_key)
 
         self.context = cfg.context_frames
         self.horizon = cfg.action_horizon
@@ -204,6 +211,17 @@ class LiberoVLADataset(Dataset):
         gidx = self._get_global_index(ep_idx, local_t)
         step = self.dataset[gidx]
         image = _to_pil_image(step[cfg.image_key])
+        wrist_image = None
+        if self.wrist_image_key:
+            if self.wrist_image_key not in step:
+                if self.require_wrist:
+                    keys = sorted(list(step.keys()))
+                    raise KeyError(
+                        f"Wrist image key '{self.wrist_image_key}' not found in dataset sample. "
+                        f"Available keys: {keys}"
+                    )
+            else:
+                wrist_image = _to_pil_image(step[self.wrist_image_key])
         if cfg.instruction_key not in step:
             keys = sorted(list(step.keys()))
             hint = ""
@@ -214,6 +232,18 @@ class LiberoVLADataset(Dataset):
                 f"Available keys: {keys}"
             )
         instruction = step[cfg.instruction_key]
+
+        proprio = None
+        if cfg.proprio_key:
+            if cfg.proprio_key not in step:
+                if self.require_proprio:
+                    keys = sorted(list(step.keys()))
+                    raise KeyError(
+                        f"Proprio key '{cfg.proprio_key}' not found in dataset sample. "
+                        f"Available keys: {keys}"
+                    )
+            else:
+                proprio = torch.as_tensor(np.asarray(step[cfg.proprio_key])).float()
 
         # Actions
         actions = []
@@ -240,7 +270,9 @@ class LiberoVLADataset(Dataset):
 
         return {
             "image": image,
+            "wrist_image": wrist_image,
             "instruction": str(instruction),
+            "proprio": proprio,
             "actions": actions_t,
             "z_hist": z_hist,
             "z_future": z_future,

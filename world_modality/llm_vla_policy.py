@@ -48,6 +48,32 @@ class ActionHeadMLP(nn.Module):
         return self.net(x)
 
 
+class ProprioConditioner(nn.Module):
+    """Inject proprioception into <ACT> hidden states via gated residual.
+
+    This mirrors the Model-F safety principle:
+    - proprio is external conditioning
+    - injected only into action computation path
+    - gate starts at 0 (no effect) and learns to open
+    """
+
+    def __init__(self, proprio_dim: int, hidden_size: int, gate_init: float = 0.0):
+        super().__init__()
+        self.proj = nn.Sequential(
+            nn.LayerNorm(proprio_dim),
+            nn.Linear(proprio_dim, hidden_size),
+        )
+        self.gate = nn.Parameter(torch.tensor(float(gate_init)))
+
+    def forward(self, act_h: torch.Tensor, proprio: torch.Tensor) -> torch.Tensor:
+        # act_h: [B, H, D], proprio: [B, P]
+        ctx = self.proj(proprio).unsqueeze(1)
+        return act_h + torch.tanh(self.gate) * ctx
+
+    def gate_value(self) -> float:
+        return float(torch.tanh(self.gate).detach().cpu().item())
+
+
 class QwenVLAWrapper(nn.Module):
     """Wrap a VLM and expose action decoding + optional future-memory injection."""
 
@@ -60,6 +86,8 @@ class QwenVLAWrapper(nn.Module):
         horizon: int,
         future_dim: int,
         enable_future_injection: bool = True,
+        enable_proprio: bool = False,
+        proprio_dim: int = 0,
         action_head_type: str = "mse",
         flow_steps: int = 8,
     ):
@@ -72,6 +100,11 @@ class QwenVLAWrapper(nn.Module):
             self.action_head = FlowActionHead(hidden_size, action_dim)
         else:
             self.action_head = ActionHeadMLP(hidden_size, action_dim)
+        self.proprio_conditioner = (
+            ProprioConditioner(proprio_dim, hidden_size, gate_init=0.0)
+            if enable_proprio and proprio_dim > 0
+            else None
+        )
         self.future_injection = (
             GatedCrossAttention(hidden_size, num_attention_heads, future_dim)
             if enable_future_injection
@@ -88,6 +121,7 @@ class QwenVLAWrapper(nn.Module):
         model_inputs: dict,
         act_positions: torch.Tensor,
         future_memory: Optional[torch.Tensor] = None,
+        proprio: Optional[torch.Tensor] = None,
         disable_future_injection: bool = False,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         outputs = self.vlm(**model_inputs, output_hidden_states=True, return_dict=True)
@@ -98,6 +132,9 @@ class QwenVLAWrapper(nn.Module):
         gather_index = act_positions.unsqueeze(-1).expand(bsz, horizon, hidden_size)
         act_h = hidden.gather(dim=1, index=gather_index)
 
+        if self.proprio_conditioner is not None and proprio is not None:
+            act_h = self.proprio_conditioner(act_h, proprio)
+
         if (
             self.future_injection is not None
             and future_memory is not None
@@ -107,6 +144,11 @@ class QwenVLAWrapper(nn.Module):
 
         actions = self.predict_actions(act_h)
         return actions, act_h
+
+    def proprio_gate_value(self) -> float:
+        if self.proprio_conditioner is None:
+            return 0.0
+        return self.proprio_conditioner.gate_value()
 
     def gate_value(self) -> float:
         if self.future_injection is None:
