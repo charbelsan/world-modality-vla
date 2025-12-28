@@ -305,6 +305,11 @@ def run_episode(
     for _ in range(10):
         obs, _, _, _ = env.step(dummy_action)
 
+    # CRITICAL: Match LeRobot's control mode - training uses delta/relative actions.
+    for robot in env.robots:
+        robot.controller.use_delta = True
+        print(f"[eval] Set robot.controller.use_delta = {robot.controller.use_delta}")
+
     frame_buf: Deque[torch.Tensor] = deque(maxlen=max(1, temporal_window))
     latent_buf: Deque[torch.Tensor] = deque(maxlen=max(1, context_frames))
 
