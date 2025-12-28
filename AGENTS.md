@@ -18,6 +18,9 @@ Non‑negotiable keys:
 - `image_key = observation.images.image`
 - `instruction_key = task` (**NOT** `instruction`)
 - `episode_id_key = episode_index`
+Recommended for closed-loop SR (LIBERO):
+- `proprio_key = observation.state`
+- `wrist_image_key = observation.images.image2` (use `--wrist_mode concat` for the Qwen pipeline)
 
 If you train with `instruction_key=instruction`, the model gets empty strings → becomes task‑agnostic → **0% LIBERO success rate is expected**. The code now fails fast if the instruction key is missing.
 
@@ -87,4 +90,3 @@ If success rate is still 0:
 In an L40S environment:
 - export HF caches to fast disk (`/mnt/fast/hf_cache`).
 - set `MUJOCO_GL=egl` for headless rollouts.
-

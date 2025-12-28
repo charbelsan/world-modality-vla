@@ -36,6 +36,18 @@ hidden states at the `<ACT_i>` positions and decode them with an MLP:
 
 Key point: actions are read from hidden states, **not** from generated text.
 
+### 1.1.1 LIBERO inputs we must use (state + wrist)
+LIBERO in LeRobot provides three key observation modalities:
+- `observation.images.image` (agentview)
+- `observation.images.image2` (wrist)
+- `observation.state` (8‑dim proprio)
+
+Empirically, “image‑only” policies can look good offline but still get **0%**
+closed-loop success due to ambiguity + compounding error. Our current default
+for LIBERO experiments is therefore:
+- **Wrist:** concatenate agentview + wrist into a single image (`--wrist_mode concat`)
+- **Proprio:** inject `observation.state` into `<ACT>` hidden states via a **gated residual** (gate init = 0)
+
 ### 1.2 What are `z_hist`, `z_future`, `z_pred`?
 We precompute a per‑frame latent `z_t` from a frozen vision model:
 - `world_latents_source=dino`: DINOv2 frame embedding (fast bootstrap)

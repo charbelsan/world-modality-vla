@@ -59,6 +59,11 @@ Total:
 ### Data requirements
 - LIBERO dataset in LeRobot format.
 - For `HuggingFaceVLA/libero`, the task language string is provided under the key `task` (not `instruction`).
+- For closed-loop LIBERO, the baseline is much more likely to work if you also condition on:
+  - `observation.state` (8-dim proprio; LeRobot’s flattened `[eef_pos(3), axis_angle(3), gripper_qpos(2)]`)
+  - `observation.images.image2` (wrist camera)
+  The current recommended path is to **concatenate agentview + wrist into a single image** (`--wrist_mode concat`)
+  and inject proprio into `<ACT>` states via a gated residual (`--use_proprio`).
 - Precomputed world latents (DINO or V-JEPA).
 - Optional CoC JSONL with {episode_index, coc_text} (or {episode_id, coc_text} for backward-compat).
   - Missing CoC entries are skipped by default; use `--require_coc` to drop episodes without labels.
@@ -117,6 +122,8 @@ For a zero-ambiguity setup, see `docs/L40S_RUNBOOK.md`.
 
 Environment variables (optional):
 - DATASET, IMAGE_KEY, INSTRUCTION_KEY, EPISODE_ID_KEY, CACHE_DIR
+- USE_PROPRIO (0/1), PROPRIO_KEY (default: observation.state)
+- WRIST_MODE (none|concat), WRIST_IMAGE_KEY (default: observation.images.image2)
 - WORLD_SOURCE (dino or vjepa)
 - TEMPORAL_WINDOW (vjepa only), LATENT_SUFFIX (e.g., m4), DELTA_PREDICTION (0/1)
 - BACKBONE (default: qwen3_vl_3b_instruct)

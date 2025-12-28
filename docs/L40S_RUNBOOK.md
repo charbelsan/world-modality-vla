@@ -74,6 +74,12 @@ export DELTA_PREDICTION=1   # recommended for vjepa (predict z_{t+k}-z_t)
 export BATCH_SIZE=8
 export MAX_EPOCHS=5
 export LOG_EVERY=50
+
+# Recommended for LIBERO closed-loop:
+export USE_PROPRIO=1
+export PROPRIO_KEY=observation.state
+export WRIST_MODE=concat
+export WRIST_IMAGE_KEY=observation.images.image2
 ```
 
 Action head (optional):

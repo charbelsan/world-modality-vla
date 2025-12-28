@@ -4,8 +4,12 @@ set -euo pipefail
 # Common settings
 DATASET=${DATASET:-"HuggingFaceVLA/libero"}
 IMAGE_KEY=${IMAGE_KEY:-"observation.images.image"}
+WRIST_IMAGE_KEY=${WRIST_IMAGE_KEY:-"observation.images.image2"}
+WRIST_MODE=${WRIST_MODE:-"concat"}   # none | concat
 INSTRUCTION_KEY=${INSTRUCTION_KEY:-"task"}
 EPISODE_ID_KEY=${EPISODE_ID_KEY:-"episode_index"}
+USE_PROPRIO=${USE_PROPRIO:-1}        # 1=enabled, 0=disabled
+PROPRIO_KEY=${PROPRIO_KEY:-"observation.state"}
 CACHE_DIR=${CACHE_DIR:-"cache"}
 WORLD_SOURCE=${WORLD_SOURCE:-"vjepa"}  # dino or vjepa
 BACKBONE=${BACKBONE:-"qwen3_vl_3b_instruct"}
@@ -48,12 +52,21 @@ if [[ "${DELTA_PREDICTION}" == "1" ]]; then
   TAG="${TAG}_delta"
 fi
 TAG="${TAG}_${ACTION_HEAD}"
+if [[ "${USE_PROPRIO}" == "1" ]]; then
+  TAG="${TAG}_state"
+fi
+if [[ "${WRIST_MODE}" == "concat" ]]; then
+  TAG="${TAG}_wrist"
+fi
 
 COMMON_ARGS=(
   --vlm_backbone "${BACKBONE}"
   --trust_remote_code
   --dataset_name "${DATASET}"
   --image_key "${IMAGE_KEY}"
+  --wrist_mode "${WRIST_MODE}"
+  --wrist_image_key "${WRIST_IMAGE_KEY}"
+  --proprio_key "${PROPRIO_KEY}"
   --instruction_key "${INSTRUCTION_KEY}"
   --episode_id_key "${EPISODE_ID_KEY}"
   --cache_dir "${CACHE_DIR}"
@@ -68,6 +81,10 @@ COMMON_ARGS=(
   --action_head "${ACTION_HEAD}"
   --flow_steps_eval "${FLOW_STEPS_EVAL}"
 )
+
+if [[ "${USE_PROPRIO}" == "1" ]]; then
+  COMMON_ARGS+=(--use_proprio)
+fi
 
 EXPECTED_LATENTS="${CACHE_DIR}/${DATASET}/train_world_latents_${WORLD_SOURCE}"
 if [[ -n "${LATENT_SUFFIX}" ]]; then
