@@ -55,7 +55,7 @@ To isolate the world-modality hypothesis and avoid wasting compute on an under-s
 
 **Intervention:** world modality injection into the **action expert hidden states only** (Model‑F do‑no‑harm)
 
-This repo now provides a LeRobot policy plugin:
+This repo provides a LeRobot policy plugin:
 - `--policy.type=smolvla_world`
 - Runbook: `docs/MI300X_LIBERO_SMOLVLA_WORLD.md`
 - Parallel launcher (MI300X): `scripts/launch_parallel_mi300x_smolvla_world.sh`
