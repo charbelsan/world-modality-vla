@@ -144,3 +144,19 @@ LeRobot logs policy outputs from `forward()`; `smolvla_world` adds:
 - `world_attn_entropy`, `world_attn_pmax`, `world_ctx_norm`, `world_act_norm` (if `policy.log_attn_stats=true`)
 - `grad_world_inject`, `grad_prophet` (previous-step grad norms; if `policy.log_grad_stats=true`)
 - `loss_total` (action + lambda_world*world_loss)
+
+---
+
+## 6) Parallel launch (MI300X)
+
+If you want to saturate a multi-GPU MI300X node, use:
+`scripts/launch_parallel_mi300x_smolvla_world.sh`.
+
+Example (4 GPUs, 3 seeds):
+```bash
+GPU_IDS="0,1,2,3" SEEDS="0 1 2" STEPS=200000 \
+  ./scripts/launch_parallel_mi300x_smolvla_world.sh
+```
+
+This writes per-run logs to:
+`outputs/train/libero_smolvla_world_parallel/logs/*.log`
