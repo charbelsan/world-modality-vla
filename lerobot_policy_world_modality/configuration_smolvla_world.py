@@ -9,6 +9,7 @@ from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 
 WorldLatentsSource = Literal["dino", "vjepa"]
 WorldMemoryMode = Literal["pred", "oracle", "zero", "shuffle", "random"]
+WorldMemoryModeRollout = Literal["pred", "zero", "random"]
 
 
 @PreTrainedConfig.register_subclass("smolvla_world")
@@ -26,6 +27,12 @@ class SmolVLAWorldConfig(SmolVLAConfig):
     cache_dir: str = "cache"
     world_latents_source: WorldLatentsSource = "vjepa"
     latent_suffix: str = "m4"  # e.g. "m4" when temporal_window=4 was used for precompute
+    world_latent_dim: int = 1024  # V-JEPA=1024, DINOv2-base=768 (override if needed)
+
+    # Optional init: load SmolVLA weights into this policy before training starts.
+    # Useful for starting from `lerobot/smolvla_base` or a local exported policy dir.
+    init_from_policy_path: str = ""
+    init_from_strict: bool = False
 
     # ---- World memory geometry ----
     context_frames: int = 4  # T_ctx (history length, z_{t-T+1..t})
@@ -36,6 +43,9 @@ class SmolVLAWorldConfig(SmolVLAConfig):
     world_inject_num_heads: int = 8
     world_gate_init: float = 0.0  # tanh(gate) starts at 0
     world_memory_mode_train: WorldMemoryMode = "pred"  # oracle only valid in offline training
+    log_attn_stats: bool = True
+    log_grad_stats: bool = True
+    world_memory_mode_rollout: WorldMemoryModeRollout = "pred"
 
     # ---- World predictor (Prophet) ----
     enable_world_predictor: bool = True
@@ -51,4 +61,3 @@ class SmolVLAWorldConfig(SmolVLAConfig):
     # Used when cached latents are not present (e.g., during env rollouts).
     world_vision_model_name: str = "facebook/vjepa2-vitg-fpc64-256"
     world_use_first_camera_only: bool = True  # easiest default for LIBERO
-

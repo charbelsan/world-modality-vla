@@ -16,6 +16,7 @@ DATASET_REPO_ID=${DATASET_REPO_ID:-"HuggingFaceVLA/libero"}
 CACHE_DIR=${CACHE_DIR:-"cache"}
 WORLD_SOURCE=${WORLD_SOURCE:-"vjepa"}     # vjepa|dino
 LATENT_SUFFIX=${LATENT_SUFFIX:-"m4"}      # m4 recommended for vjepa temporal
+WORLD_LATENT_DIM=${WORLD_LATENT_DIM:-1024}
 CONTEXT_FRAMES=${CONTEXT_FRAMES:-4}
 FUTURE_OFFSET=${FUTURE_OFFSET:-8}
 LAMBDA_WORLD=${LAMBDA_WORLD:-0.2}
@@ -25,6 +26,7 @@ BATCH_SIZE=${BATCH_SIZE:-64}
 SEEDS=${SEEDS:-"0 1"}
 
 OUTPUT_ROOT=${OUTPUT_ROOT:-"outputs/train/libero_smolvla_world_matrix"}
+INIT_POLICY_PATH=${INIT_POLICY_PATH:-"lerobot/smolvla_base"}
 
 # LIBERO eval
 EVAL_TASK=${EVAL_TASK:-"libero_spatial"}
@@ -81,10 +83,12 @@ for seed in ${SEEDS}; do
   run_train "E0_smolvla_baseline" "smolvla" "${seed}"
 
   run_train "E1_world_zero" "smolvla_world" "${seed}" \
+    --policy.init_from_policy_path="${INIT_POLICY_PATH}" \
     --policy.dataset_repo_id="${DATASET_REPO_ID}" \
     --policy.cache_dir="${CACHE_DIR}" \
     --policy.world_latents_source="${WORLD_SOURCE}" \
     --policy.latent_suffix="${LATENT_SUFFIX}" \
+    --policy.world_latent_dim="${WORLD_LATENT_DIM}" \
     --policy.context_frames="${CONTEXT_FRAMES}" \
     --policy.future_offset="${FUTURE_OFFSET}" \
     --policy.lambda_world="${LAMBDA_WORLD}" \
@@ -92,10 +96,12 @@ for seed in ${SEEDS}; do
     --policy.enable_world_injection=true
 
   run_train "E2_world_pred" "smolvla_world" "${seed}" \
+    --policy.init_from_policy_path="${INIT_POLICY_PATH}" \
     --policy.dataset_repo_id="${DATASET_REPO_ID}" \
     --policy.cache_dir="${CACHE_DIR}" \
     --policy.world_latents_source="${WORLD_SOURCE}" \
     --policy.latent_suffix="${LATENT_SUFFIX}" \
+    --policy.world_latent_dim="${WORLD_LATENT_DIM}" \
     --policy.context_frames="${CONTEXT_FRAMES}" \
     --policy.future_offset="${FUTURE_OFFSET}" \
     --policy.lambda_world="${LAMBDA_WORLD}" \
@@ -109,4 +115,3 @@ for seed in ${SEEDS}; do
     run_eval "${OUTPUT_ROOT}/E2_world_pred_seed${seed}"
   fi
 done
-

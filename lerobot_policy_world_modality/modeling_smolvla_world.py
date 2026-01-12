@@ -15,7 +15,6 @@ from lerobot.policies.smolvla.modeling_smolvla import (  # type: ignore
 from lerobot.utils.constants import ACTION
 
 from world_modality.model import GatedCrossAttention, Prophet
-from world_modality.train_utils import compute_world_cosine
 from world_modality.vision import VisionEncoder
 
 from .configuration_smolvla_world import SmolVLAWorldConfig
@@ -39,6 +38,16 @@ def compute_world_loss_continuous_masked(
     return _masked_mean(loss_per, valid)
 
 
+@torch.no_grad()
+def compute_world_cosine_masked(pred: torch.Tensor, target: torch.Tensor, valid: torch.Tensor) -> float:
+    pred_f = pred.float()
+    tgt_f = target.float()
+    pred_n = pred_f / pred_f.norm(dim=-1, keepdim=True).clamp_min(1e-8)
+    tgt_n = tgt_f / tgt_f.norm(dim=-1, keepdim=True).clamp_min(1e-8)
+    cos = (pred_n * tgt_n).sum(dim=-1)  # [B, K]
+    return float(_masked_mean(cos, valid).cpu().item())
+
+
 class WorldInjectedVLAFlowMatching(VLAFlowMatching):
     """VLAFlowMatching with Model-F style world injection into action expert only.
 
@@ -54,6 +63,7 @@ class WorldInjectedVLAFlowMatching(VLAFlowMatching):
         inject_num_heads: int,
         gate_init: float,
         enable_world_injection: bool,
+        track_stats: bool,
     ):
         # Do not call VLAFlowMatching.__init__ (it would allocate a second VLM).
         nn.Module.__init__(self)
@@ -82,6 +92,7 @@ class WorldInjectedVLAFlowMatching(VLAFlowMatching):
                 d_model=self.vlm_with_expert.expert_hidden_size,
                 n_heads=int(inject_num_heads),
                 future_dim=int(future_dim),
+                track_stats=bool(track_stats),
             )
             with torch.no_grad():
                 self.world_inject.gate.copy_(torch.tensor(float(gate_init)))
@@ -98,6 +109,11 @@ class WorldInjectedVLAFlowMatching(VLAFlowMatching):
         if self.world_inject is None or self._world_memory is None:
             return suffix_out
         return self.world_inject(suffix_out, self._world_memory)
+
+    def world_last_stats(self) -> dict[str, float]:
+        if self.world_inject is None:
+            return {}
+        return self.world_inject.last_stats()
 
     def forward(
         self, images, img_masks, lang_tokens, lang_masks, state, actions, noise=None, time=None
@@ -178,20 +194,10 @@ class SmolVLAWorldPolicy(SmolVLAPolicy):
         super().__init__(config)
         self.config: SmolVLAWorldConfig = config
 
-        self._latent_dim: Optional[int] = None
+        self._latent_dim: int = int(config.world_latent_dim)
         self.prophet: Optional[Prophet] = None
         self.world_encoder: Optional[VisionEncoder] = None
         self._world_hist: deque[torch.Tensor] = deque(maxlen=int(config.context_frames))
-
-    def reset(self):
-        super().reset()
-        self._world_hist.clear()
-
-    def _ensure_world_modules(self, latent_dim: int) -> None:
-        if self._latent_dim is not None:
-            return
-
-        self._latent_dim = int(latent_dim)
 
         if self.config.enable_world_predictor:
             self.prophet = Prophet(
@@ -201,15 +207,8 @@ class SmolVLAWorldPolicy(SmolVLAPolicy):
                 n_layers=int(self.config.prophet_layers),
                 n_heads=int(self.config.prophet_heads),
                 dropout=float(self.config.prophet_dropout),
-            ).to(self.config.device)
+            )
 
-        self.world_encoder = VisionEncoder(
-            model_name=str(self.config.world_vision_model_name),
-            device=str(self.config.device),
-            dtype="float16",
-        )
-
-        # Wrap existing model in-place to add injection without duplicating VLM/expert.
         base_model = self.model
         self.model = WorldInjectedVLAFlowMatching(
             base_model,
@@ -217,14 +216,69 @@ class SmolVLAWorldPolicy(SmolVLAPolicy):
             inject_num_heads=int(self.config.world_inject_num_heads),
             gate_init=float(self.config.world_gate_init),
             enable_world_injection=bool(self.config.enable_world_injection),
+            track_stats=bool(self.config.log_attn_stats),
         )
-        # Keep device placement consistent.
-        self.model.to(self.config.device)
+
+        self._grad_accum: dict[str, torch.Tensor] = {}
+        self._last_grad_norms: dict[str, float] = {}
+        if self.config.log_grad_stats:
+            self._register_grad_hooks()
+
+        if self.config.init_from_policy_path:
+            self._init_from_policy(self.config.init_from_policy_path, strict=bool(self.config.init_from_strict))
+
+    def reset(self):
+        super().reset()
+        self._world_hist.clear()
+
+    def _init_from_policy(self, policy_path: str, strict: bool) -> None:
+        # Load a baseline SmolVLA policy and copy matching weights into this policy.
+        # This avoids requiring `--policy.path` (which would force policy type=smolvla).
+        init_policy = SmolVLAPolicy.from_pretrained(policy_path)
+        incompatible = self.load_state_dict(init_policy.state_dict(), strict=False)
+        missing = getattr(incompatible, "missing_keys", [])
+        unexpected = getattr(incompatible, "unexpected_keys", [])
+        if strict and unexpected:
+            raise RuntimeError(f"Unexpected keys when loading init policy: {unexpected[:50]}")
+        if strict:
+            # If nothing loaded due to mismatch, this will be caught as shape mismatch earlier.
+            # Missing world-only keys is expected; missing core model keys is not.
+            if any(k.startswith("model.") for k in missing):
+                raise RuntimeError(
+                    "Init policy load missed core SmolVLA keys. Check that smolvla_world config "
+                    "(num layers/width) matches the init policy."
+                )
+
+    def _register_grad_hooks(self) -> None:
+        # Compute grad norms for world modules without modifying the LeRobot training loop.
+        # Hooks accumulate grad^2 during backward; we report them on the *next* forward call.
+        def make_hook(name: str):
+            def _hook(grad: torch.Tensor):
+                if grad is None:
+                    return
+                acc = self._grad_accum.get(name)
+                val = grad.detach().float().pow(2).sum()
+                self._grad_accum[name] = val if acc is None else (acc + val)
+            return _hook
+
+        if isinstance(self.model, WorldInjectedVLAFlowMatching) and self.model.world_inject is not None:
+            for p in self.model.world_inject.parameters():
+                if p.requires_grad:
+                    p.register_hook(make_hook("grad2_world_inject"))
+        if self.prophet is not None:
+            for p in self.prophet.parameters():
+                if p.requires_grad:
+                    p.register_hook(make_hook("grad2_prophet"))
 
     def _build_world_memory_train(
         self, z_hist: torch.Tensor, z_future: torch.Tensor, valid: torch.Tensor
     ) -> tuple[Optional[torch.Tensor], torch.Tensor, float]:
         mode = str(self.config.world_memory_mode_train)
+        if int(z_hist.shape[-1]) != int(self._latent_dim):
+            raise ValueError(
+                f"world_z_hist dim={int(z_hist.shape[-1])} does not match policy.world_latent_dim={self._latent_dim}. "
+                "Fix by setting --policy.world_latent_dim and recomputing cache consistently."
+            )
         z_current = z_hist[:, -1:, :]
 
         if self.prophet is None:
@@ -236,11 +290,11 @@ class SmolVLAWorldPolicy(SmolVLAPolicy):
             z_pred_abs = z_current + z_pred
             target_delta = z_future - z_current
             world_loss = compute_world_loss_continuous_masked(z_pred, target_delta, valid)
-            world_cos = float(compute_world_cosine(z_pred, target_delta))
+            world_cos = float(compute_world_cosine_masked(z_pred, target_delta, valid))
         else:
             z_pred_abs = z_pred
             world_loss = compute_world_loss_continuous_masked(z_pred, z_future, valid)
-            world_cos = float(compute_world_cosine(z_pred, z_future))
+            world_cos = float(compute_world_cosine_masked(z_pred, z_future, valid))
 
         if mode == "oracle":
             mem = z_future
@@ -258,7 +312,13 @@ class SmolVLAWorldPolicy(SmolVLAPolicy):
 
     @torch.no_grad()
     def _build_world_memory_rollout(self, images: list[torch.Tensor]) -> Optional[torch.Tensor]:
-        if self.world_encoder is None or self.prophet is None:
+        if self.world_encoder is None:
+            self.world_encoder = VisionEncoder(
+                model_name=str(self.config.world_vision_model_name),
+                device=str(self.config.device),
+                dtype="float16",
+            )
+        if self.prophet is None:
             return None
         if len(images) == 0:
             return None
@@ -268,10 +328,29 @@ class SmolVLAWorldPolicy(SmolVLAPolicy):
         img01 = ((img + 1.0) * 0.5).clamp(0.0, 1.0)
 
         z_t = self.world_encoder.encode(img01)  # [B, D]
+        if int(z_t.shape[-1]) != int(self._latent_dim):
+            raise ValueError(
+                f"Online world encoder dim={int(z_t.shape[-1])} does not match policy.world_latent_dim={self._latent_dim}. "
+                "Fix by setting --policy.world_latent_dim and/or --policy.world_vision_model_name."
+            )
         self._world_hist.append(z_t)
         while len(self._world_hist) < int(self.config.context_frames):
             self._world_hist.appendleft(z_t)
         z_hist = torch.stack(list(self._world_hist), dim=1)  # [B, T, D]
+
+        mode = str(self.config.world_memory_mode_rollout)
+        if mode == "zero":
+            return torch.zeros(
+                (z_hist.shape[0], int(self.config.future_offset), self._latent_dim),
+                device=z_hist.device,
+                dtype=z_hist.dtype,
+            )
+        if mode == "random":
+            return torch.randn(
+                (z_hist.shape[0], int(self.config.future_offset), self._latent_dim),
+                device=z_hist.device,
+                dtype=z_hist.dtype,
+            )
 
         z_pred = self.prophet(z_hist)
         if self.config.delta_prediction:
@@ -280,6 +359,14 @@ class SmolVLAWorldPolicy(SmolVLAPolicy):
         return z_pred
 
     def forward(self, batch: dict[str, Tensor], noise=None, time=None):
+        # Report previous-step grad norms (hooks fill them during backward).
+        if self.config.log_grad_stats and self._grad_accum:
+            out: dict[str, float] = {}
+            for k, v in list(self._grad_accum.items()):
+                out[k.replace("grad2_", "grad_")] = float(v.sqrt().detach().cpu().item())
+            self._last_grad_norms = out
+            self._grad_accum = {}
+
         # Cached latents are provided by the processor during offline training.
         z_hist = batch.get("world_z_hist", None)
         z_future = batch.get("world_z_future", None)
@@ -308,24 +395,17 @@ class SmolVLAWorldPolicy(SmolVLAPolicy):
         metrics["world_cos"] = float(world_cos)
         if isinstance(self.model, WorldInjectedVLAFlowMatching):
             metrics["world_gate"] = self.model.world_gate_value()
+            if self.config.log_attn_stats:
+                stats = self.model.world_last_stats()
+                for k, v in stats.items():
+                    metrics[f"world_{k}"] = float(v)
+        if self._last_grad_norms:
+            metrics.update(self._last_grad_norms)
         metrics["loss_total"] = float(total.detach().cpu().item())
         return total, metrics
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor], noise: Tensor | None = None, **kwargs):
-        # Ensure world modules at first rollout step (latent dim inferred online).
-        if self._latent_dim is None:
-            images, _ = self.prepare_images(batch)
-            # Infer latent dim from encoder output once.
-            encoder = VisionEncoder(
-                model_name=str(self.config.world_vision_model_name),
-                device=str(self.config.device),
-                dtype="float16",
-            )
-            img01 = ((images[0] + 1.0) * 0.5).clamp(0.0, 1.0)
-            z_tmp = encoder.encode(img01)
-            self._ensure_world_modules(int(z_tmp.shape[-1]))
-
         if isinstance(self.model, WorldInjectedVLAFlowMatching):
             images, _ = self.prepare_images(batch)
             mem = self._build_world_memory_rollout(images)

@@ -81,10 +81,12 @@ lerobot-train \
   --dataset.repo_id=HuggingFaceVLA/libero \
   --policy.type=smolvla_world \
   --policy.device=cuda \
+  --policy.init_from_policy_path=lerobot/smolvla_base \
   --policy.dataset_repo_id=HuggingFaceVLA/libero \
   --policy.cache_dir=cache \
   --policy.world_latents_source=vjepa \
   --policy.latent_suffix=m4 \
+  --policy.world_latent_dim=1024 \
   --policy.context_frames=4 \
   --policy.future_offset=8 \
   --policy.lambda_world=0.2 \
@@ -100,6 +102,7 @@ lerobot-train \
 Notes:
 - If cached latents are missing, training will fail as soon as the first batch includes `index`.
 - The action expert is unchanged; world memory is injected **only** into the action expert hidden states.
+- World modules (Prophet + world injector) are created at policy init so the optimizer sees them; set `policy.world_latent_dim` consistently with your cached latents backend.
 
 ---
 
@@ -138,5 +141,6 @@ LeRobot logs policy outputs from `forward()`; `smolvla_world` adds:
 - `world_loss` (aux loss, masked near episode end)
 - `world_cos` (diagnostic cosine similarity)
 - `world_gate` (tanh(gate), should move off 0 if memory is used)
+- `world_attn_entropy`, `world_attn_pmax`, `world_ctx_norm`, `world_act_norm` (if `policy.log_attn_stats=true`)
+- `grad_world_inject`, `grad_prophet` (previous-step grad norms; if `policy.log_grad_stats=true`)
 - `loss_total` (action + lambda_world*world_loss)
-

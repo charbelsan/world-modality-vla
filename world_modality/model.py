@@ -111,19 +111,45 @@ class GatedCrossAttention(nn.Module):
       future_memory: [B, K_fut, future_dim]
     """
 
-    def __init__(self, d_model: int, n_heads: int, future_dim: int):
+    def __init__(self, d_model: int, n_heads: int, future_dim: int, track_stats: bool = False):
         super().__init__()
         self.future_proj = nn.Linear(future_dim, d_model)
         self.cross_attn = nn.MultiheadAttention(d_model, n_heads, batch_first=True)
         self.gate = nn.Parameter(torch.tensor(0.0))
+        self.track_stats = bool(track_stats)
+        self._last_stats: dict[str, float] = {}
 
     def forward(self, act_h: torch.Tensor, future_memory: torch.Tensor) -> torch.Tensor:
         kv = self.future_proj(future_memory)  # [B, K, d_model]
-        ctx, _ = self.cross_attn(query=act_h, key=kv, value=kv)
-        return act_h + torch.tanh(self.gate) * ctx
+        ctx, attn = self.cross_attn(
+            query=act_h,
+            key=kv,
+            value=kv,
+            need_weights=self.track_stats,
+            average_attn_weights=False if self.track_stats else True,
+        )
+        gate = torch.tanh(self.gate)
+        out = act_h + gate * ctx
+        if self.track_stats and attn is not None:
+            # attn: [B, heads, Q, K] when average_attn_weights=False
+            with torch.no_grad():
+                p = attn.float().clamp_min(1e-8)
+                ent = float((-(p * p.log()).sum(dim=-1)).mean().cpu().item())
+                pmax = float(p.max(dim=-1).values.mean().cpu().item())
+                self._last_stats = {
+                    "attn_entropy": ent,
+                    "attn_pmax": pmax,
+                    "gate": float(gate.detach().cpu().item()),
+                    "ctx_norm": float(ctx.float().norm(dim=-1).mean().cpu().item()),
+                    "act_norm": float(act_h.float().norm(dim=-1).mean().cpu().item()),
+                }
+        return out
 
     def gate_value(self) -> float:
         return float(torch.tanh(self.gate).detach().cpu().item())
+
+    def last_stats(self) -> dict[str, float]:
+        return dict(self._last_stats)
 
 
 class WorldPolicyTransformer(nn.Module):
