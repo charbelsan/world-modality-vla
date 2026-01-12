@@ -1,0 +1,142 @@
+# MI300X Runbook: LIBERO + SmolVLA + World Modality (Plugin Policy)
+
+Goal: run a clean, reproducible experiment matrix where **SmolVLA** is the working baseline and we add
+**world modality memory** via **gated cross-attention into the action expert only** (Model‑F “do‑no‑harm”).
+
+This repo provides a LeRobot plugin policy:
+- `--policy.type=smolvla_world`
+
+LeRobot auto-discovers packages named `lerobot_policy_*`, so installing this repo makes the policy available.
+
+---
+
+## 0) One-time setup
+
+### Install
+From this repo:
+```bash
+pip install -e .
+```
+
+Make sure LeRobot is installed too (editable recommended):
+```bash
+pip install -e /path/to/lerobot
+```
+
+### Environment (MI300X / ROCm)
+Recommended (adjust for your system):
+```bash
+export HF_HOME=/mnt/fast/hf_cache
+export HF_HUB_CACHE=/mnt/fast/hf_cache
+export TRANSFORMERS_CACHE=/mnt/fast/hf_cache
+export MUJOCO_GL=egl
+```
+
+---
+
+## 1) Precompute world latents (offline training only)
+
+Offline training uses cached latents indexed by the dataset global `index`. Rollouts do **not** require this cache.
+
+Recommended (V‑JEPA temporal, `m=4`):
+```bash
+python -m world_modality.precompute_world_latents \
+  --dataset_name HuggingFaceVLA/libero \
+  --image_key observation.images.image \
+  --cache_dir cache \
+  --world_latents_source vjepa \
+  --temporal_window 4 \
+  --device cuda
+```
+
+This produces (example):
+`cache/HuggingFaceVLA/libero/train_world_latents_vjepa_m4.fp16.npy`
+
+---
+
+## 2) Train baseline vs world-modality
+
+### 2.1 Baseline (SmolVLA)
+```bash
+lerobot-train \
+  --dataset.repo_id=HuggingFaceVLA/libero \
+  --policy.type=smolvla \
+  --policy.device=cuda \
+  --batch_size=64 \
+  --steps=200000 \
+  --output_dir outputs/train/libero_smolvla_baseline_seed0 \
+  --seed=0 \
+  --wandb.enable=false
+```
+
+### 2.2 World modality (SmolVLA + gated world cross-attn)
+Key knobs:
+- `policy.context_frames` = T_ctx (default 4)
+- `policy.future_offset` = K (default 8)
+- `policy.lambda_world` = weight on world predictor loss
+- `policy.world_memory_mode_train` = `pred|oracle|zero|shuffle|random` (oracle is **training-only**)
+
+```bash
+lerobot-train \
+  --dataset.repo_id=HuggingFaceVLA/libero \
+  --policy.type=smolvla_world \
+  --policy.device=cuda \
+  --policy.dataset_repo_id=HuggingFaceVLA/libero \
+  --policy.cache_dir=cache \
+  --policy.world_latents_source=vjepa \
+  --policy.latent_suffix=m4 \
+  --policy.context_frames=4 \
+  --policy.future_offset=8 \
+  --policy.lambda_world=0.2 \
+  --policy.world_memory_mode_train=pred \
+  --policy.enable_world_injection=true \
+  --batch_size=64 \
+  --steps=200000 \
+  --output_dir outputs/train/libero_smolvla_world_seed0 \
+  --seed=0 \
+  --wandb.enable=false
+```
+
+Notes:
+- If cached latents are missing, training will fail as soon as the first batch includes `index`.
+- The action expert is unchanged; world memory is injected **only** into the action expert hidden states.
+
+---
+
+## 3) Evaluate closed-loop LIBERO success rate
+
+Use LeRobot’s built-in LIBERO env:
+```bash
+lerobot-eval \
+  --policy.path outputs/train/libero_smolvla_world_seed0/checkpoints/200000/pretrained_model \
+  --policy.device=cuda \
+  --env.type=libero \
+  --env.task=libero_spatial \
+  --eval.n_episodes=50 \
+  --eval.batch_size=10
+```
+
+---
+
+## 4) Recommended experiment matrix (minimal, high-signal)
+
+Run with 2–3 seeds each:
+
+- **E0**: `smolvla` baseline
+- **E1**: `smolvla_world` with `world_memory_mode_train=zero` (capacity control)
+- **E2**: `smolvla_world` with `world_memory_mode_train=pred` (main hypothesis)
+
+Optional plumbing checks (training-only):
+- **Oracle**: `world_memory_mode_train=oracle` (upper bound; not a closed-loop mode)
+- **Shuffle/Random**: should not help; if they do, you’re likely seeing a bug or a regularization effect.
+
+---
+
+## 5) What to watch in logs
+
+LeRobot logs policy outputs from `forward()`; `smolvla_world` adds:
+- `world_loss` (aux loss, masked near episode end)
+- `world_cos` (diagnostic cosine similarity)
+- `world_gate` (tanh(gate), should move off 0 if memory is used)
+- `loss_total` (action + lambda_world*world_loss)
+

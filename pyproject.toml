@@ -65,7 +65,7 @@ build-backend = "hatchling.build"
 allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
-packages = ["world_modality", "coc_vla"]
+packages = ["world_modality", "coc_vla", "lerobot_policy_world_modality"]
 
 [tool.ruff]
 line-length = 100

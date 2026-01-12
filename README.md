@@ -130,6 +130,13 @@ Notes:
 - Switch to `--world_latents_source vjepa` once V-JEPA latents are available.
 - Action decoding uses `<ACT_i>` tokens and reads hidden states (no text decoding).
 
+## SmolVLA + World Modality (LeRobot plugin)
+
+This repo also ships a LeRobot policy plugin (`lerobot_policy_world_modality`) that registers:
+- `--policy.type=smolvla_world`
+
+Runbook (MI300X-friendly): `docs/MI300X_LIBERO_SMOLVLA_WORLD.md`
+
 ### Phase 2: Talk while acting (CoC loss)
 
 This keeps control independent: actions are computed from <ACT> hidden states, and language
