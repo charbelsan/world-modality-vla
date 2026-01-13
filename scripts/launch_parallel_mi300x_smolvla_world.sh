@@ -53,9 +53,8 @@ gpu_for_job () {
 run_job () {
   local job_idx="$1"
   local exp_name="$2"
-  local policy_type="$3"
-  local seed="$4"
-  shift 4
+  local seed="$3"
+  shift 3
 
   local out_dir="${OUTPUT_ROOT}/${exp_name}_seed${seed}"
   local log_file="${OUTPUT_ROOT}/logs/${exp_name}_seed${seed}.log"
@@ -72,7 +71,6 @@ run_job () {
     fi
     exec lerobot-wm-train \
       --dataset.repo_id="${DATASET_REPO_ID}" \
-      --policy.type="${policy_type}" \
       --policy.device=cuda \
       --batch_size="${BATCH_SIZE}" \
       --steps="${STEPS}" \
@@ -90,9 +88,13 @@ job_idx=0
 pids=()
 
 for seed in ${SEEDS}; do
-  pids+=("$(run_job "${job_idx}" "E0_smolvla_baseline" "smolvla" "${seed}")"); job_idx=$((job_idx+1))
+  # E0 baseline: fine-tune from the same pretrained weights for a fair comparison.
+  pids+=("$(run_job "${job_idx}" "E0_smolvla_baseline" "${seed}" \
+    --policy.path="${INIT_POLICY_PATH}" \
+  )"); job_idx=$((job_idx+1))
 
-  pids+=("$(run_job "${job_idx}" "E1_world_zero" "smolvla_world" "${seed}" \
+  pids+=("$(run_job "${job_idx}" "E1_world_zero" "${seed}" \
+    --policy.type="smolvla_world" \
     --policy.init_from_policy_path="${INIT_POLICY_PATH}" \
     --policy.dataset_repo_id="${DATASET_REPO_ID}" \
     --policy.cache_dir="${CACHE_DIR}" \
@@ -106,7 +108,8 @@ for seed in ${SEEDS}; do
     --policy.enable_world_injection=true \
   )"); job_idx=$((job_idx+1))
 
-  pids+=("$(run_job "${job_idx}" "E2_world_pred" "smolvla_world" "${seed}" \
+  pids+=("$(run_job "${job_idx}" "E2_world_pred" "${seed}" \
+    --policy.type="smolvla_world" \
     --policy.init_from_policy_path="${INIT_POLICY_PATH}" \
     --policy.dataset_repo_id="${DATASET_REPO_ID}" \
     --policy.cache_dir="${CACHE_DIR}" \

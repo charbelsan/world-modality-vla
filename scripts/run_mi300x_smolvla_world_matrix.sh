@@ -46,15 +46,13 @@ fi
 
 run_train () {
   local exp_name="$1"
-  local policy_type="$2"
-  local seed="$3"
-  shift 3
+  local seed="$2"
+  shift 2
   local out_dir="${OUTPUT_ROOT}/${exp_name}_seed${seed}"
 
   echo "=== Train ${exp_name} seed=${seed} -> ${out_dir} ==="
   lerobot-wm-train \
     --dataset.repo_id="${DATASET_REPO_ID}" \
-    --policy.type="${policy_type}" \
     --policy.device=cuda \
     --batch_size="${BATCH_SIZE}" \
     --steps="${STEPS}" \
@@ -82,9 +80,12 @@ run_eval () {
 }
 
 for seed in ${SEEDS}; do
-  run_train "E0_smolvla_baseline" "smolvla" "${seed}"
+  # E0 baseline: fine-tune from the same pretrained weights for a fair comparison.
+  run_train "E0_smolvla_baseline" "${seed}" \
+    --policy.path="${INIT_POLICY_PATH}"
 
-  run_train "E1_world_zero" "smolvla_world" "${seed}" \
+  run_train "E1_world_zero" "${seed}" \
+    --policy.type="smolvla_world" \
     --policy.init_from_policy_path="${INIT_POLICY_PATH}" \
     --policy.dataset_repo_id="${DATASET_REPO_ID}" \
     --policy.cache_dir="${CACHE_DIR}" \
@@ -97,7 +98,8 @@ for seed in ${SEEDS}; do
     --policy.world_memory_mode_train="zero" \
     --policy.enable_world_injection=true
 
-  run_train "E2_world_pred" "smolvla_world" "${seed}" \
+  run_train "E2_world_pred" "${seed}" \
+    --policy.type="smolvla_world" \
     --policy.init_from_policy_path="${INIT_POLICY_PATH}" \
     --policy.dataset_repo_id="${DATASET_REPO_ID}" \
     --policy.cache_dir="${CACHE_DIR}" \

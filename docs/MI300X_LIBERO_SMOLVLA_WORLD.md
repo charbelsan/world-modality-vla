@@ -85,10 +85,12 @@ Note: some LeRobot versions do not auto-discover policy plugins. This repo insta
 - `lerobot-wm-eval` (imports the plugin, then runs LeRobot eval)
 
 ### 2.1 Baseline (SmolVLA)
+Important: for a fair comparison against `smolvla_world`, baseline should start from the same pretrained
+weights (`lerobot/smolvla_base`).
 ```bash
 lerobot-wm-train \
   --dataset.repo_id=HuggingFaceVLA/libero \
-  --policy.type=smolvla \
+  --policy.path=lerobot/smolvla_base \
   --policy.device=cuda \
   --batch_size=64 \
   --steps=200000 \
