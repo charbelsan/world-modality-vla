@@ -11,6 +11,7 @@ venv/
 cache/
 logs*/
 wandb/
+outputs/
 
 # OS / editor
 .DS_Store
@@ -19,4 +20,3 @@ wandb/
 
 # External cloned repos (for research inspection)
 coc_vla/external/repos/
-
