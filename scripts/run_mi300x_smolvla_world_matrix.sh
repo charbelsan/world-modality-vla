@@ -27,6 +27,18 @@ STEPS=${STEPS:-200000}
 BATCH_SIZE=${BATCH_SIZE:-64}
 SEEDS=${SEEDS:-"0 1"}
 
+# Optional: keep total *samples* fixed when changing batch size.
+# If set, STEPS will be computed as ceil(TOTAL_SAMPLES / BATCH_SIZE).
+TOTAL_SAMPLES=${TOTAL_SAMPLES:-""}
+
+# Optional optimizer/scheduler overrides (applied to all experiments in this run).
+# These correspond to LeRobot config keys (as printed in logs).
+OPTIM_LR=${OPTIM_LR:-""}
+SCHED_PEAK_LR=${SCHED_PEAK_LR:-""}
+SCHED_WARMUP_STEPS=${SCHED_WARMUP_STEPS:-""}
+SCHED_DECAY_STEPS=${SCHED_DECAY_STEPS:-""}
+SCHED_DECAY_LR=${SCHED_DECAY_LR:-""}
+
 OUTPUT_ROOT=${OUTPUT_ROOT:-"outputs/train/libero_smolvla_world_matrix"}
 # Prefer the LIBERO-tuned checkpoint (matches `observation.images.image` / `image2` directly).
 INIT_POLICY_PATH=${INIT_POLICY_PATH:-"HuggingFaceVLA/smolvla_libero"}
@@ -39,6 +51,16 @@ EVAL_EPISODES=${EVAL_EPISODES:-50}
 EVAL_BATCH_SIZE=${EVAL_BATCH_SIZE:-10}
 
 mkdir -p "${OUTPUT_ROOT}"
+
+if [[ -n "${TOTAL_SAMPLES}" ]]; then
+  if ! [[ "${TOTAL_SAMPLES}" =~ ^[0-9]+$ ]]; then
+    echo "TOTAL_SAMPLES must be an integer, got: ${TOTAL_SAMPLES}"
+    exit 2
+  fi
+  steps=$(( (TOTAL_SAMPLES + BATCH_SIZE - 1) / BATCH_SIZE ))
+  echo "TOTAL_SAMPLES=${TOTAL_SAMPLES} with BATCH_SIZE=${BATCH_SIZE} -> STEPS=${steps}"
+  STEPS="${steps}"
+fi
 
 LATENTS_PATH="${CACHE_DIR}/${DATASET_REPO_ID}/train_world_latents_${WORLD_SOURCE}_${LATENT_SUFFIX}.fp16.npy"
 if [[ ! -f "${LATENTS_PATH}" ]]; then
@@ -54,6 +76,22 @@ run_train () {
   local out_dir="${OUTPUT_ROOT}/${exp_name}_seed${seed}"
 
   echo "=== Train ${exp_name} seed=${seed} -> ${out_dir} ==="
+  local -a hp_args=()
+  if [[ -n "${OPTIM_LR}" ]]; then
+    hp_args+=( "--optimizer.lr=${OPTIM_LR}" )
+  fi
+  if [[ -n "${SCHED_PEAK_LR}" ]]; then
+    hp_args+=( "--scheduler.peak_lr=${SCHED_PEAK_LR}" )
+  fi
+  if [[ -n "${SCHED_WARMUP_STEPS}" ]]; then
+    hp_args+=( "--scheduler.num_warmup_steps=${SCHED_WARMUP_STEPS}" )
+  fi
+  if [[ -n "${SCHED_DECAY_STEPS}" ]]; then
+    hp_args+=( "--scheduler.num_decay_steps=${SCHED_DECAY_STEPS}" )
+  fi
+  if [[ -n "${SCHED_DECAY_LR}" ]]; then
+    hp_args+=( "--scheduler.decay_lr=${SCHED_DECAY_LR}" )
+  fi
   if [[ -n "${LEROBOT_WM_RENAME_MAP_JSON:-}" ]]; then
     env LEROBOT_WM_RENAME_MAP_JSON="${LEROBOT_WM_RENAME_MAP_JSON}" \
       lerobot-wm-train \
@@ -65,6 +103,7 @@ run_train () {
       --output_dir "${out_dir}" \
       --seed="${seed}" \
       --wandb.enable=false \
+      "${hp_args[@]}" \
       "$@"
     return
   fi
@@ -78,6 +117,7 @@ run_train () {
     --output_dir "${out_dir}" \
     --seed="${seed}" \
     --wandb.enable=false \
+    "${hp_args[@]}" \
     "$@"
 }
 

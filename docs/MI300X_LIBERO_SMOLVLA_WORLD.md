@@ -110,6 +110,20 @@ Note: some LeRobot versions do not auto-discover policy plugins. This repo insta
 - `lerobot-wm-train` (imports the plugin, then runs LeRobot train)
 - `lerobot-wm-eval` (imports the plugin, then runs LeRobot eval)
 
+### 2.0 Throughput knobs (optional)
+By default, `scripts/run_mi300x_smolvla_world_matrix.sh` uses `BATCH_SIZE=64` and a fixed `STEPS`.
+
+To increase batch size **without changing the sample budget**, set `TOTAL_SAMPLES` and let the script compute `STEPS`:
+- Example (matches the current default budget of `64 * 50000 = 3,200,000` samples):
+```bash
+TOTAL_SAMPLES=3200000 BATCH_SIZE=256 STEPS=0 \
+  SCHED_WARMUP_STEPS=250 SCHED_DECAY_STEPS=7500 \
+  ./scripts/run_mi300x_smolvla_world_matrix.sh
+```
+
+You can also override optimizer/scheduler fields (applied to E0/E1/E2 in that run):
+`OPTIM_LR`, `SCHED_PEAK_LR`, `SCHED_WARMUP_STEPS`, `SCHED_DECAY_STEPS`, `SCHED_DECAY_LR`.
+
 ### 2.1 Baseline (SmolVLA)
 Important: for a fair comparison against `smolvla_world`, baseline should start from the same pretrained
 weights (recommended for LIBERO: `HuggingFaceVLA/smolvla_libero`).
