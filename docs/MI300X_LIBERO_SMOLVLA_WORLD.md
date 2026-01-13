@@ -195,6 +195,15 @@ lerobot-wm-eval \
   --eval.batch_size=10
 ```
 
+### 3.1 Eval action chunking (important when SR is unexpectedly low)
+Some SmolVLA/LeRobot setups are sensitive to the number of environment steps executed per policy query (often referred
+to as `n_action_steps`). If you observe unexpectedly low SR (e.g., near 0% when you expect non-trivial performance),
+try setting:
+```bash
+EVAL_N_ACTION_STEPS=10 ./scripts/run_mi300x_smolvla_world_matrix.sh
+```
+The launcher detects which flag name your installed `lerobot-wm-eval` supports and applies it (best-effort).
+
 Note: if you use a checkpoint that expects camera keys like `observation.images.camera1`, set:
 `LEROBOT_WM_RENAME_MAP_JSON='{"observation.images.image":"observation.images.camera1","observation.images.image2":"observation.images.camera2"}'`.
 

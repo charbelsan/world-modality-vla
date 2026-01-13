@@ -49,6 +49,9 @@ RENAME_MAP_E0=${RENAME_MAP_E0:-""}
 EVAL_TASK=${EVAL_TASK:-"libero_spatial"}
 EVAL_EPISODES=${EVAL_EPISODES:-50}
 EVAL_BATCH_SIZE=${EVAL_BATCH_SIZE:-10}
+# Some LeRobot/SmolVLA eval setups are sensitive to action chunking.
+# If set, we will try to pass it to `lerobot-wm-eval` using the supported flag name.
+EVAL_N_ACTION_STEPS=${EVAL_N_ACTION_STEPS:-""}
 
 mkdir -p "${OUTPUT_ROOT}"
 
@@ -130,6 +133,22 @@ run_eval () {
     exit 3
   fi
   echo "=== Eval ${ckpt_dir} on ${EVAL_TASK} (${EVAL_EPISODES} eps) ==="
+
+  local -a eval_extra=()
+  if [[ -n "${EVAL_N_ACTION_STEPS}" ]]; then
+    # Best-effort detection: different LeRobot versions may expose this under eval.* or env.*.
+    help_txt="$(lerobot-wm-eval --help 2>&1 || true)"
+    if echo "${help_txt}" | grep -q -- "--eval.n_action_steps"; then
+      eval_extra+=( "--eval.n_action_steps=${EVAL_N_ACTION_STEPS}" )
+    elif echo "${help_txt}" | grep -q -- "--env.n_action_steps"; then
+      eval_extra+=( "--env.n_action_steps=${EVAL_N_ACTION_STEPS}" )
+    elif echo "${help_txt}" | grep -q -- "--policy.n_action_steps"; then
+      eval_extra+=( "--policy.n_action_steps=${EVAL_N_ACTION_STEPS}" )
+    else
+      echo "Warning: EVAL_N_ACTION_STEPS=${EVAL_N_ACTION_STEPS} set but no supported flag found in lerobot-wm-eval --help; skipping."
+    fi
+  fi
+
   if [[ -n "${LEROBOT_WM_RENAME_MAP_JSON:-}" ]]; then
     env LEROBOT_WM_RENAME_MAP_JSON="${LEROBOT_WM_RENAME_MAP_JSON}" \
       lerobot-wm-eval \
@@ -139,6 +158,7 @@ run_eval () {
       --env.task="${EVAL_TASK}" \
       --eval.n_episodes="${EVAL_EPISODES}" \
       --eval.batch_size="${EVAL_BATCH_SIZE}" \
+      "${eval_extra[@]}" \
       "$@"
     return
   fi
@@ -150,6 +170,7 @@ run_eval () {
     --env.task="${EVAL_TASK}" \
     --eval.n_episodes="${EVAL_EPISODES}" \
     --eval.batch_size="${EVAL_BATCH_SIZE}" \
+    "${eval_extra[@]}" \
     "$@"
 }
 
