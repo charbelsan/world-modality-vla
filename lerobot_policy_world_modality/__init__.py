@@ -25,6 +25,7 @@ def _patch_lerobot_factories() -> None:
 
     try:
         import lerobot.policies.factory as factory  # type: ignore
+        import lerobot.policies.utils as policy_utils  # type: ignore
         from lerobot.processor import (  # type: ignore
             DeviceProcessorStep,
             RenameObservationsProcessorStep,
@@ -38,6 +39,7 @@ def _patch_lerobot_factories() -> None:
 
     orig_get_policy_class = factory.get_policy_class
     orig_make_pre_post_processors = factory.make_pre_post_processors
+    orig_validate_visual_features_consistency = policy_utils.validate_visual_features_consistency
 
     def _env_rename_map() -> dict[str, str] | None:
         s = os.environ.get("LEROBOT_WM_RENAME_MAP_JSON")
@@ -78,6 +80,18 @@ def _patch_lerobot_factories() -> None:
             return SmolVLAWorldPolicy
         return orig_get_policy_class(name)
 
+    def validate_visual_features_consistency(cfg, features):  # type: ignore[no-untyped-def]
+        """Patched validation that applies rename_map before checking feature consistency."""
+        rename_map = _env_rename_map()
+        if rename_map:
+            # Transform feature keys: dataset_key → policy_key
+            renamed_features = {}
+            for key, value in features.items():
+                new_key = rename_map.get(key, key)
+                renamed_features[new_key] = value
+            features = renamed_features
+        return orig_validate_visual_features_consistency(cfg, features)
+
     def make_pre_post_processors(policy_cfg, pretrained_path=None, **kwargs):  # type: ignore[no-untyped-def]
         if isinstance(policy_cfg, SmolVLAWorldConfig):
             pre, post = make_smolvla_world_pre_post_processors(
@@ -111,6 +125,9 @@ def _patch_lerobot_factories() -> None:
 
     factory.get_policy_class = get_policy_class  # type: ignore[assignment]
     factory.make_pre_post_processors = make_pre_post_processors  # type: ignore[assignment]
+    # Also patch the validation function to apply rename_map before feature checking
+    policy_utils.validate_visual_features_consistency = validate_visual_features_consistency  # type: ignore[assignment]
+    factory.validate_visual_features_consistency = validate_visual_features_consistency  # type: ignore[assignment]
     factory._world_modality_patched = True
 
 
