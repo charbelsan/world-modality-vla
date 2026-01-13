@@ -12,6 +12,8 @@ set -euo pipefail
 #
 # Customize via env vars below.
 
+export MUJOCO_GL=${MUJOCO_GL:-osmesa}
+
 DATASET_REPO_ID=${DATASET_REPO_ID:-"HuggingFaceVLA/libero"}
 CACHE_DIR=${CACHE_DIR:-"cache"}
 WORLD_SOURCE=${WORLD_SOURCE:-"vjepa"}     # vjepa|dino

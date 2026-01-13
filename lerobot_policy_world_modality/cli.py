@@ -1,6 +1,56 @@
 from __future__ import annotations
 
+import os
 import sys
+
+
+def _ensure_libero_config_noninteractive() -> None:
+    """Prevent LIBERO from prompting for config on first import.
+
+    `libero.libero` creates `~/.libero/config.yaml` on first import and (unfortunately)
+    prompts via `input()` if the file is missing. That breaks non-interactive runs
+    (train/eval launched from scripts, tmux, SLURM, etc.).
+
+    We pre-create a minimal config file if:
+    - `libero.libero` is importable (installed), and
+    - the config file does not already exist.
+    """
+
+    if os.environ.get("LEROBOT_WM_SKIP_LIBERO_CONFIG", "").lower() in {"1", "true", "yes"}:
+        return
+
+    try:
+        import importlib.util
+        from pathlib import Path
+    except Exception:  # pragma: no cover
+        return
+
+    # If LIBERO isn't installed, do nothing.
+    spec = importlib.util.find_spec("libero.libero")
+    if spec is None or not spec.submodule_search_locations:
+        return
+
+    config_dir = Path(
+        os.environ.get("LIBERO_CONFIG_PATH", os.path.expanduser("~/.libero"))
+    ).expanduser()
+    config_file = config_dir / "config.yaml"
+    if config_file.exists():
+        return
+
+    try:
+        benchmark_root = Path(list(spec.submodule_search_locations)[0]).resolve()
+        path_dict = {
+            "benchmark_root": str(benchmark_root),
+            "bddl_files": str((benchmark_root / "bddl_files").resolve()),
+            "init_states": str((benchmark_root / "init_files").resolve()),
+            "datasets": str((benchmark_root.parent / "datasets").resolve()),
+            "assets": str((benchmark_root / "assets").resolve()),
+        }
+        config_dir.mkdir(parents=True, exist_ok=True)
+        config_file.write_text("\n".join(f"{k}: {v}" for k, v in path_dict.items()) + "\n")
+    except Exception:
+        # If anything goes wrong, fall back to LIBERO's native behavior.
+        return
 
 
 def train_main() -> None:
@@ -11,6 +61,7 @@ def train_main() -> None:
     """
 
     import lerobot_policy_world_modality  # noqa: F401
+    _ensure_libero_config_noninteractive()
 
     try:
         from lerobot.scripts.lerobot_train import main
@@ -26,6 +77,7 @@ def eval_main() -> None:
     """Wrapper around `lerobot-eval` that ensures the policy plugin is imported."""
 
     import lerobot_policy_world_modality  # noqa: F401
+    _ensure_libero_config_noninteractive()
 
     try:
         from lerobot.scripts.lerobot_eval import main
@@ -35,4 +87,3 @@ def eval_main() -> None:
         ) from e
 
     sys.exit(main())
-

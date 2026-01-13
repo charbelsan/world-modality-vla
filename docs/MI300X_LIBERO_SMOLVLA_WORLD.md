@@ -6,7 +6,10 @@ Goal: run a clean, reproducible experiment matrix where **SmolVLA** is the worki
 This repo provides a LeRobot plugin policy:
 - `--policy.type=smolvla_world`
 
-LeRobot auto-discovers packages named `lerobot_policy_*`, so installing this repo makes the policy available.
+Newer LeRobot versions may auto-discover packages named `lerobot_policy_*`. Some versions (e.g. LeRobot `0.4.2`)
+do **not** reliably auto-discover, so this repo also installs wrapper entrypoints:
+- `lerobot-wm-train`
+- `lerobot-wm-eval`
 
 ---
 
@@ -29,8 +32,29 @@ Recommended (adjust for your system):
 export HF_HOME=/mnt/fast/hf_cache
 export HF_HUB_CACHE=/mnt/fast/hf_cache
 export TRANSFORMERS_CACHE=/mnt/fast/hf_cache
-export MUJOCO_GL=egl
+#
+# LIBERO headless rendering:
+# - On MI300X/ROCm machines, `MUJOCO_GL=osmesa` is the most reliable default.
+# - If EGL is supported on your driver stack, you can try `MUJOCO_GL=egl` for faster rendering.
+export MUJOCO_GL=osmesa
 ```
+
+### LIBERO simulator deps (Ubuntu)
+LIBERO closed-loop rollouts require `libero` + `robosuite` + `mujoco`, plus a few system deps.
+
+On Ubuntu, install:
+```bash
+sudo apt-get update
+sudo apt-get install -y cmake build-essential libosmesa6 libegl1 mesa-utils
+```
+
+Then in your Python env:
+```bash
+pip install mujoco libero
+```
+
+Non-interactive note: the `libero` package creates `~/.libero/config.yaml` on first import and can prompt via `input()`.
+`lerobot-wm-train` / `lerobot-wm-eval` auto-create this config if missing. Set `LEROBOT_WM_SKIP_LIBERO_CONFIG=1` to disable.
 
 ---
 

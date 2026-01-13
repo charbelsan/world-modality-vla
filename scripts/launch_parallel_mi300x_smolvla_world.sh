@@ -10,6 +10,8 @@ set -euo pipefail
 # - Uses `tmux`/`screen`-friendly plain background jobs and writes per-run logs.
 # - Sets HIP/CUDA/ROCR visible device env vars for each job (round-robin over GPU_IDS).
 
+export MUJOCO_GL=${MUJOCO_GL:-osmesa}
+
 DATASET_REPO_ID=${DATASET_REPO_ID:-"HuggingFaceVLA/libero"}
 CACHE_DIR=${CACHE_DIR:-"cache"}
 WORLD_SOURCE=${WORLD_SOURCE:-"vjepa"}     # vjepa|dino
