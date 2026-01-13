@@ -56,9 +56,13 @@ This produces (example):
 
 ## 2) Train baseline vs world-modality
 
+Note: some LeRobot versions do not auto-discover policy plugins. This repo installs wrapper entrypoints:
+- `lerobot-wm-train` (imports the plugin, then runs LeRobot train)
+- `lerobot-wm-eval` (imports the plugin, then runs LeRobot eval)
+
 ### 2.1 Baseline (SmolVLA)
 ```bash
-lerobot-train \
+lerobot-wm-train \
   --dataset.repo_id=HuggingFaceVLA/libero \
   --policy.type=smolvla \
   --policy.device=cuda \
@@ -77,7 +81,7 @@ Key knobs:
 - `policy.world_memory_mode_train` = `pred|oracle|zero|shuffle|random` (oracle is **training-only**)
 
 ```bash
-lerobot-train \
+lerobot-wm-train \
   --dataset.repo_id=HuggingFaceVLA/libero \
   --policy.type=smolvla_world \
   --policy.device=cuda \
@@ -110,7 +114,7 @@ Notes:
 
 Use LeRobot’s built-in LIBERO env:
 ```bash
-lerobot-eval \
+lerobot-wm-eval \
   --policy.path outputs/train/libero_smolvla_world_seed0/checkpoints/200000/pretrained_model \
   --policy.device=cuda \
   --env.type=libero \

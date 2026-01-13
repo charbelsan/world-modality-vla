@@ -7,7 +7,7 @@ set -euo pipefail
 #   E2: smolvla_world (pred memory; main hypothesis)
 #
 # Assumes:
-# - `lerobot-train` / `lerobot-eval` are on PATH
+# - `lerobot-wm-train` / `lerobot-wm-eval` are on PATH (installed by this repo)
 # - this repo is installed (`pip install -e .`) so `smolvla_world` is registered
 #
 # Customize via env vars below.
@@ -50,7 +50,7 @@ run_train () {
   local out_dir="${OUTPUT_ROOT}/${exp_name}_seed${seed}"
 
   echo "=== Train ${exp_name} seed=${seed} -> ${out_dir} ==="
-  lerobot-train \
+  lerobot-wm-train \
     --dataset.repo_id="${DATASET_REPO_ID}" \
     --policy.type="${policy_type}" \
     --policy.device=cuda \
@@ -70,7 +70,7 @@ run_eval () {
     exit 3
   fi
   echo "=== Eval ${ckpt_dir} on ${EVAL_TASK} (${EVAL_EPISODES} eps) ==="
-  lerobot-eval \
+  lerobot-wm-eval \
     --policy.path "${ckpt_dir}" \
     --policy.device=cuda \
     --env.type=libero \

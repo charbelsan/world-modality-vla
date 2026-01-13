@@ -40,6 +40,10 @@ dependencies = [
     "matplotlib",
 ]
 
+[project.scripts]
+lerobot-wm-train = "lerobot_policy_world_modality.cli:train_main"
+lerobot-wm-eval = "lerobot_policy_world_modality.cli:eval_main"
+
 [project.optional-dependencies]
 dev = [
     "pytest",

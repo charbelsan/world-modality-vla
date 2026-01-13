@@ -68,7 +68,7 @@ run_job () {
       export ROCR_VISIBLE_DEVICES="${gpu}"
       export CUDA_VISIBLE_DEVICES="${gpu}"
     fi
-    exec lerobot-train \
+    exec lerobot-wm-train \
       --dataset.repo_id="${DATASET_REPO_ID}" \
       --policy.type="${policy_type}" \
       --policy.device=cuda \
@@ -132,4 +132,3 @@ for pid in "${pids[@]}"; do
 done
 
 exit "${fail}"
-
