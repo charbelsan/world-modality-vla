@@ -72,6 +72,7 @@ run_job () {
     exec lerobot-wm-train \
       --dataset.repo_id="${DATASET_REPO_ID}" \
       --policy.device=cuda \
+      --policy.push_to_hub=false \
       --batch_size="${BATCH_SIZE}" \
       --steps="${STEPS}" \
       --output_dir "${out_dir}" \

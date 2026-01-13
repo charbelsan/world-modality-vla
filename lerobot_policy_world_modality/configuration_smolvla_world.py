@@ -36,6 +36,9 @@ class SmolVLAWorldConfig(SmolVLAConfig):
     init_from_policy_path: str = ""
     init_from_strict: bool = False
 
+    # ---- Hub pushing (disable by default for experiments) ----
+    push_to_hub: bool = False
+
     # ---- World memory geometry ----
     context_frames: int = 4  # T_ctx (history length, z_{t-T+1..t})
     future_offset: int = 8  # K (predict z_{t+1..t+K})

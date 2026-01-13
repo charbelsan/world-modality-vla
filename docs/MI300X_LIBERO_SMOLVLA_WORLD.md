@@ -92,6 +92,7 @@ lerobot-wm-train \
   --dataset.repo_id=HuggingFaceVLA/libero \
   --policy.path=lerobot/smolvla_base \
   --policy.device=cuda \
+  --policy.push_to_hub=false \
   --batch_size=64 \
   --steps=200000 \
   --output_dir outputs/train/libero_smolvla_baseline_seed0 \
@@ -111,6 +112,7 @@ lerobot-wm-train \
   --dataset.repo_id=HuggingFaceVLA/libero \
   --policy.type=smolvla_world \
   --policy.device=cuda \
+  --policy.push_to_hub=false \
   --policy.init_from_policy_path=lerobot/smolvla_base \
   --policy.dataset_repo_id=HuggingFaceVLA/libero \
   --policy.cache_dir=cache \
