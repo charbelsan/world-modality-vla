@@ -114,18 +114,20 @@ Note: some LeRobot versions do not auto-discover policy plugins. This repo insta
 Important: for a fair comparison against `smolvla_world`, baseline should start from the same pretrained
 weights (`lerobot/smolvla_base`).
 ```bash
+LEROBOT_WM_RENAME_MAP_JSON='{"observation.images.image":"observation.images.camera1","observation.images.image2":"observation.images.camera2"}' \
 lerobot-wm-train \
   --dataset.repo_id=HuggingFaceVLA/libero \
   --policy.path=lerobot/smolvla_base \
   --policy.device=cuda \
   --policy.push_to_hub=false \
-  --rename_map='{"observation.images.image":"observation.images.camera1","observation.images.image2":"observation.images.camera2"}' \
   --batch_size=64 \
   --steps=200000 \
   --output_dir outputs/train/libero_smolvla_baseline_seed0 \
   --seed=0 \
   --wandb.enable=false
 ```
+
+Note: this env var mapping is applied by `lerobot-wm-train` / `lerobot-wm-eval` and avoids JSON→dict parsing issues in some LeRobot/draccus setups.
 
 ### 2.2 World modality (SmolVLA + gated world cross-attn)
 Key knobs:
@@ -180,7 +182,7 @@ lerobot-wm-eval \
 
 Note: `lerobot/smolvla_base` expects camera keys like `observation.images.camera1`. LIBERO datasets use
 `observation.images.image` / `observation.images.image2`, so for evaluating the **E0 baseline** you should pass:
-`--rename_map='{"observation.images.image":"observation.images.camera1","observation.images.image2":"observation.images.camera2"}'`.
+`LEROBOT_WM_RENAME_MAP_JSON='{"observation.images.image":"observation.images.camera1","observation.images.image2":"observation.images.camera2"}'`.
 
 ---
 

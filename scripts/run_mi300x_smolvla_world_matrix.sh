@@ -52,6 +52,21 @@ run_train () {
   local out_dir="${OUTPUT_ROOT}/${exp_name}_seed${seed}"
 
   echo "=== Train ${exp_name} seed=${seed} -> ${out_dir} ==="
+  if [[ -n "${LEROBOT_WM_RENAME_MAP_JSON:-}" ]]; then
+    env LEROBOT_WM_RENAME_MAP_JSON="${LEROBOT_WM_RENAME_MAP_JSON}" \
+      lerobot-wm-train \
+      --dataset.repo_id="${DATASET_REPO_ID}" \
+      --policy.device=cuda \
+      --policy.push_to_hub=false \
+      --batch_size="${BATCH_SIZE}" \
+      --steps="${STEPS}" \
+      --output_dir "${out_dir}" \
+      --seed="${seed}" \
+      --wandb.enable=false \
+      "$@"
+    return
+  fi
+
   lerobot-wm-train \
     --dataset.repo_id="${DATASET_REPO_ID}" \
     --policy.device=cuda \
@@ -73,6 +88,19 @@ run_eval () {
     exit 3
   fi
   echo "=== Eval ${ckpt_dir} on ${EVAL_TASK} (${EVAL_EPISODES} eps) ==="
+  if [[ -n "${LEROBOT_WM_RENAME_MAP_JSON:-}" ]]; then
+    env LEROBOT_WM_RENAME_MAP_JSON="${LEROBOT_WM_RENAME_MAP_JSON}" \
+      lerobot-wm-eval \
+      --policy.path "${ckpt_dir}" \
+      --policy.device=cuda \
+      --env.type=libero \
+      --env.task="${EVAL_TASK}" \
+      --eval.n_episodes="${EVAL_EPISODES}" \
+      --eval.batch_size="${EVAL_BATCH_SIZE}" \
+      "$@"
+    return
+  fi
+
   lerobot-wm-eval \
     --policy.path "${ckpt_dir}" \
     --policy.device=cuda \
@@ -85,9 +113,8 @@ run_eval () {
 
 for seed in ${SEEDS}; do
   # E0 baseline: fine-tune from the same pretrained weights for a fair comparison.
-  run_train "E0_smolvla_baseline" "${seed}" \
-    --policy.path="${INIT_POLICY_PATH}" \
-    --rename_map="${RENAME_MAP_E0}"
+  LEROBOT_WM_RENAME_MAP_JSON="${RENAME_MAP_E0}" run_train "E0_smolvla_baseline" "${seed}" \
+    --policy.path="${INIT_POLICY_PATH}"
 
   run_train "E1_world_zero" "${seed}" \
     --policy.type="smolvla_world" \
@@ -119,8 +146,7 @@ for seed in ${SEEDS}; do
 
   # Optional: evaluate each run after training completes.
   if [[ "${DO_EVAL:-0}" == "1" ]]; then
-    run_eval "${OUTPUT_ROOT}/E0_smolvla_baseline_seed${seed}" \
-      --rename_map="${RENAME_MAP_E0}"
+    LEROBOT_WM_RENAME_MAP_JSON="${RENAME_MAP_E0}" run_eval "${OUTPUT_ROOT}/E0_smolvla_baseline_seed${seed}"
     run_eval "${OUTPUT_ROOT}/E1_world_zero_seed${seed}"
     run_eval "${OUTPUT_ROOT}/E2_world_pred_seed${seed}"
   fi
