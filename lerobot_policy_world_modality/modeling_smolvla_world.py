@@ -265,6 +265,19 @@ class SmolVLAWorldPolicy(SmolVLAPolicy):
         super().reset()
         self._world_hist.clear()
 
+    def _ensure_world_modules(self, detected_latent_dim: int) -> None:
+        """Validate that world modules match the detected latent dimension from data.
+
+        This is called on first forward pass with world latents to ensure the configured
+        world_latent_dim matches what's actually in the cached latents.
+        """
+        if detected_latent_dim != self._latent_dim:
+            raise ValueError(
+                f"World latent dimension mismatch: config has world_latent_dim={self._latent_dim}, "
+                f"but cached latents have dim={detected_latent_dim}. "
+                f"Update --policy.world_latent_dim to match your cached latents."
+            )
+
     def _register_grad_hooks(self) -> None:
         # Compute grad norms for world modules without modifying the LeRobot training loop.
         # Hooks accumulate grad^2 during backward; we report them on the *next* forward call.
