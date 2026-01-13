@@ -29,6 +29,7 @@ SEEDS=${SEEDS:-"0 1"}
 
 OUTPUT_ROOT=${OUTPUT_ROOT:-"outputs/train/libero_smolvla_world_matrix"}
 INIT_POLICY_PATH=${INIT_POLICY_PATH:-"lerobot/smolvla_base"}
+RENAME_MAP_E0=${RENAME_MAP_E0:-'{"observation.images.image":"observation.images.camera1","observation.images.image2":"observation.images.camera2"}'}
 
 # LIBERO eval
 EVAL_TASK=${EVAL_TASK:-"libero_spatial"}
@@ -65,6 +66,7 @@ run_train () {
 
 run_eval () {
   local out_dir="$1"
+  shift 1
   local ckpt_dir="${out_dir}/checkpoints/${STEPS}/pretrained_model"
   if [[ ! -d "${ckpt_dir}" ]]; then
     echo "Checkpoint not found: ${ckpt_dir}"
@@ -77,13 +79,15 @@ run_eval () {
     --env.type=libero \
     --env.task="${EVAL_TASK}" \
     --eval.n_episodes="${EVAL_EPISODES}" \
-    --eval.batch_size="${EVAL_BATCH_SIZE}"
+    --eval.batch_size="${EVAL_BATCH_SIZE}" \
+    "$@"
 }
 
 for seed in ${SEEDS}; do
   # E0 baseline: fine-tune from the same pretrained weights for a fair comparison.
   run_train "E0_smolvla_baseline" "${seed}" \
-    --policy.path="${INIT_POLICY_PATH}"
+    --policy.path="${INIT_POLICY_PATH}" \
+    --rename_map="${RENAME_MAP_E0}"
 
   run_train "E1_world_zero" "${seed}" \
     --policy.type="smolvla_world" \
@@ -115,7 +119,8 @@ for seed in ${SEEDS}; do
 
   # Optional: evaluate each run after training completes.
   if [[ "${DO_EVAL:-0}" == "1" ]]; then
-    run_eval "${OUTPUT_ROOT}/E0_smolvla_baseline_seed${seed}"
+    run_eval "${OUTPUT_ROOT}/E0_smolvla_baseline_seed${seed}" \
+      --rename_map="${RENAME_MAP_E0}"
     run_eval "${OUTPUT_ROOT}/E1_world_zero_seed${seed}"
     run_eval "${OUTPUT_ROOT}/E2_world_pred_seed${seed}"
   fi

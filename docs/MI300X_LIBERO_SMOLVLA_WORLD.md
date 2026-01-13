@@ -93,6 +93,7 @@ lerobot-wm-train \
   --policy.path=lerobot/smolvla_base \
   --policy.device=cuda \
   --policy.push_to_hub=false \
+  --rename_map='{"observation.images.image":"observation.images.camera1","observation.images.image2":"observation.images.camera2"}' \
   --batch_size=64 \
   --steps=200000 \
   --output_dir outputs/train/libero_smolvla_baseline_seed0 \
@@ -150,6 +151,10 @@ lerobot-wm-eval \
   --eval.n_episodes=50 \
   --eval.batch_size=10
 ```
+
+Note: `lerobot/smolvla_base` expects camera keys like `observation.images.camera1`. LIBERO datasets use
+`observation.images.image` / `observation.images.image2`, so for evaluating the **E0 baseline** you should pass:
+`--rename_map='{"observation.images.image":"observation.images.camera1","observation.images.image2":"observation.images.camera2"}'`.
 
 ---
 
