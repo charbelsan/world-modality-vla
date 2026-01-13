@@ -128,6 +128,7 @@ lerobot-wm-train \
 ```
 
 Note: this env var mapping is applied by `lerobot-wm-train` / `lerobot-wm-eval` and avoids JSON→dict parsing issues in some LeRobot/draccus setups.
+Some LeRobot versions also validate feature keys before preprocessors run; this repo patches that validation to honor `LEROBOT_WM_RENAME_MAP_JSON` as well.
 
 ### 2.2 World modality (SmolVLA + gated world cross-attn)
 Key knobs:
