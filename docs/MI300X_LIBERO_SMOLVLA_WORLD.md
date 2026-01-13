@@ -116,7 +116,7 @@ lerobot-wm-train \
   --policy.cache_dir=cache \
   --policy.world_latents_source=vjepa \
   --policy.latent_suffix=m4 \
-  --policy.world_latent_dim=1024 \
+  --policy.world_latent_dim=1408 \
   --policy.context_frames=4 \
   --policy.future_offset=8 \
   --policy.lambda_world=0.2 \

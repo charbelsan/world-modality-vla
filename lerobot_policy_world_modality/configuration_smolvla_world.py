@@ -1,15 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 
 
-WorldLatentsSource = Literal["dino", "vjepa"]
-WorldMemoryMode = Literal["pred", "oracle", "zero", "shuffle", "random"]
-WorldMemoryModeRollout = Literal["pred", "zero", "random"]
+# Type aliases for documentation (draccus can't parse Literal from CLI, so we use str)
+# Valid values: WorldLatentsSource: "dino" | "vjepa"
+# Valid values: WorldMemoryMode: "pred" | "oracle" | "zero" | "shuffle" | "random"
+# Valid values: WorldMemoryModeRollout: "pred" | "zero" | "random"
 
 
 @PreTrainedConfig.register_subclass("smolvla_world")
@@ -25,9 +25,11 @@ class SmolVLAWorldConfig(SmolVLAConfig):
     # ---- World latents / cache ----
     dataset_repo_id: str = "HuggingFaceVLA/libero"
     cache_dir: str = "cache"
-    world_latents_source: WorldLatentsSource = "vjepa"
+    world_latents_source: str = "vjepa"  # "dino" or "vjepa"
     latent_suffix: str = "m4"  # e.g. "m4" when temporal_window=4 was used for precompute
-    world_latent_dim: int = 1024  # V-JEPA=1024, DINOv2-base=768 (override if needed)
+    # NOTE: this must match the cached latents file second dimension.
+    # For the default encoder `facebook/vjepa2-vitg-fpc64-256`, embedding dim is 1408.
+    world_latent_dim: int = 1408
 
     # Optional init: load SmolVLA weights into this policy before training starts.
     # Useful for starting from `lerobot/smolvla_base` or a local exported policy dir.
@@ -42,10 +44,10 @@ class SmolVLAWorldConfig(SmolVLAConfig):
     enable_world_injection: bool = True
     world_inject_num_heads: int = 8
     world_gate_init: float = 0.0  # tanh(gate) starts at 0
-    world_memory_mode_train: WorldMemoryMode = "pred"  # oracle only valid in offline training
+    world_memory_mode_train: str = "pred"  # "pred" | "oracle" | "zero" | "shuffle" | "random"
     log_attn_stats: bool = True
     log_grad_stats: bool = True
-    world_memory_mode_rollout: WorldMemoryModeRollout = "pred"
+    world_memory_mode_rollout: str = "pred"  # "pred" | "zero" | "random"
 
     # ---- World predictor (Prophet) ----
     enable_world_predictor: bool = True

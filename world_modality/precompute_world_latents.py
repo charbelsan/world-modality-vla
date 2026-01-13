@@ -122,7 +122,32 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--vjepa_checkpoint", type=str, default="", help="Optional TorchScript encoder for V-JEPA.")
     parser.add_argument("--temporal_window", type=int, default=1,
                         help="Number of frames per clip for temporal encoding (1=single-frame, 4=recommended)")
+    parser.add_argument(
+        "--resume",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="If output .npy exists, resume by appending from the last written row (assumes trailing zeros).",
+    )
     return parser.parse_args()
+
+
+def _resume_offset_from_trailing_zeros(latents: np.ndarray, *, block_rows: int = 8192) -> int:
+    """Return the next row index to write, assuming the file is written sequentially and the unwritten tail is 0s."""
+    total = int(latents.shape[0])
+    if total == 0:
+        return 0
+    if np.any(latents[-1] != 0):
+        return total
+    end = total
+    while end > 0:
+        start = max(0, end - block_rows)
+        blk = latents[start:end]
+        nonzero = np.any(blk != 0, axis=1)
+        if np.any(nonzero):
+            last = int(start + np.where(nonzero)[0].max())
+            return last + 1
+        end = start
+    return 0
 
 
 def main():
@@ -241,27 +266,54 @@ def main():
                     imgs = imgs.to(device)
                     return encoder.encode(imgs)
 
-    # Probe embedding dimension with a single batch.
-    first_batch = next(iter(loader))
-    with torch.no_grad():
-        first_emb = encode_batch(first_batch)
-    emb_dim = int(first_emb.shape[-1])
-
-    # Create memmap for incremental writing.
     total = len(ds)
     os.makedirs(os.path.dirname(cache_paths.latents_path), exist_ok=True)
-    latents_mm = np.lib.format.open_memmap(
-        cache_paths.latents_path,
-        mode="w+",
-        dtype=np.float16,
-        shape=(total, emb_dim),
-    )
-
     offset = 0
+    latents_mm: np.ndarray
+
+    if bool(args.resume) and os.path.exists(cache_paths.latents_path):
+        latents_mm = np.load(cache_paths.latents_path, mmap_mode="r+")
+        if int(latents_mm.shape[0]) != int(total):
+            raise ValueError(
+                f"Existing latents file has shape[0]={int(latents_mm.shape[0])} but dataset has {int(total)}. "
+                "Delete the file and recompute with the same dataset revision/order."
+            )
+        offset = _resume_offset_from_trailing_zeros(latents_mm)
+        if offset >= total:
+            print(f"Latents already complete: {cache_paths.latents_path} (rows={total})")
+            return
+        print(f"Resuming latents write at row offset={offset}/{total}: {cache_paths.latents_path}")
+
+        # Verify embedding dimension matches current encoder settings.
+        first_batch = next(iter(loader))
+        with torch.no_grad():
+            first_emb = encode_batch(first_batch)
+        emb_dim = int(first_emb.shape[-1])
+        if int(latents_mm.shape[1]) != int(emb_dim):
+            raise ValueError(
+                f"Existing latents file dim={int(latents_mm.shape[1])} but encoder produces dim={int(emb_dim)}. "
+                "Delete the file and recompute with consistent `--vision_model_name/--temporal_window`."
+            )
+    else:
+        # Probe embedding dimension with a single batch.
+        first_batch = next(iter(loader))
+        with torch.no_grad():
+            first_emb = encode_batch(first_batch)
+        emb_dim = int(first_emb.shape[-1])
+
+        # Create memmap for incremental writing.
+        latents_mm = np.lib.format.open_memmap(
+            cache_paths.latents_path,
+            mode="w+",
+            dtype=np.float16,
+            shape=(total, emb_dim),
+        )
+
     print(
         f"Encoding {total} frames to {cache_paths.latents_path} "
-        f"(source={args.world_latents_source}, dim={emb_dim})"
+        f"(source={args.world_latents_source}, dim={int(latents_mm.shape[1])}, start_row={offset})"
     )
+    start_row = int(offset)
     with torch.no_grad():
         for batch_imgs in tqdm(loader, desc="Encoding latents"):
             emb = encode_batch(batch_imgs).detach().cpu().numpy().astype(np.float16)
@@ -272,21 +324,23 @@ def main():
     latents_mm.flush()
     print(f"Saved latents to {cache_paths.latents_path}")
 
-    # Save metadata JSON for temporal encoding
-    if temporal_window > 1:
-        metadata = {
-            "temporal_window": temporal_window,
-            "model": model_name if args.world_latents_source == "vjepa" else args.vision_model_name,
-            "pooling": "mean_spatial_then_temporal",
-            "embedding_dim": emb_dim,
-            "total_frames": total,
-            "dataset": args.dataset_name,
-            "split": args.split,
-        }
-        metadata_path = cache_paths.latents_path.replace(".npy", "_metadata.json")
-        with open(metadata_path, "w") as f:
-            json.dump(metadata, f, indent=2)
-        print(f"Saved metadata to {metadata_path}")
+    # Save metadata JSON for reproducibility (always).
+    metadata = {
+        "temporal_window": temporal_window,
+        "model": model_name if args.world_latents_source == "vjepa" else args.vision_model_name,
+        "pooling": "mean_spatial_then_temporal" if temporal_window > 1 else "mean_spatial",
+        "embedding_dim": int(latents_mm.shape[1]),
+        "total_frames": total,
+        "dataset": args.dataset_name,
+        "split": args.split,
+        "source": args.world_latents_source,
+        "resume_start_row": start_row,
+        "final_written_rows": int(offset),
+    }
+    metadata_path = cache_paths.latents_path.replace(".npy", "_metadata.json")
+    with open(metadata_path, "w") as f:
+        json.dump(metadata, f, indent=2)
+    print(f"Saved metadata to {metadata_path}")
 
 
 if __name__ == "__main__":

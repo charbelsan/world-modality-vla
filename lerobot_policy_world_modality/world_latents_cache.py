@@ -60,6 +60,13 @@ class WorldLatentsCache:
                 f"Latents cache has {n} frames but dataset has {len(ds)}. "
                 "Recompute latents with the same dataset version/order."
             )
+        # Fail fast if the cache looks incomplete (common failure mode: partially-written memmap).
+        tail = self.latents[len(ds) - 1]
+        if not np.any(tail != 0):
+            raise ValueError(
+                "Latents cache appears incomplete: last dataset row is all zeros. "
+                "Recompute or resume precompute_world_latents to fill the file."
+            )
 
         # Build global index -> (episode_idx, episode_start, episode_end)
         ep_idx_of = np.empty((len(ds),), dtype=np.int64)
