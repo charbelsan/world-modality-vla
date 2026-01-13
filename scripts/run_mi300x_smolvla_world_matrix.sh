@@ -28,8 +28,10 @@ BATCH_SIZE=${BATCH_SIZE:-64}
 SEEDS=${SEEDS:-"0 1"}
 
 OUTPUT_ROOT=${OUTPUT_ROOT:-"outputs/train/libero_smolvla_world_matrix"}
-INIT_POLICY_PATH=${INIT_POLICY_PATH:-"lerobot/smolvla_base"}
-RENAME_MAP_E0=${RENAME_MAP_E0:-'{"observation.images.image":"observation.images.camera1","observation.images.image2":"observation.images.camera2"}'}
+# Prefer the LIBERO-tuned checkpoint (matches `observation.images.image` / `image2` directly).
+INIT_POLICY_PATH=${INIT_POLICY_PATH:-"HuggingFaceVLA/smolvla_libero"}
+# Only needed if you explicitly use a policy that expects different camera key names.
+RENAME_MAP_E0=${RENAME_MAP_E0:-""}
 
 # LIBERO eval
 EVAL_TASK=${EVAL_TASK:-"libero_spatial"}

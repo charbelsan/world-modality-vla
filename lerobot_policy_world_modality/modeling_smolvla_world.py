@@ -191,6 +191,28 @@ class SmolVLAWorldPolicy(SmolVLAPolicy):
     name = "smolvla_world"
 
     def __init__(self, config: SmolVLAWorldConfig):
+        # If we're asked to init from a pretrained SmolVLA policy, first align this config's
+        # *architecture* fields to the init checkpoint's config so weight loading is shape-consistent
+        # (e.g., smolvla_base vs smolvla_libero differ in depth/width).
+        init_policy: Optional[SmolVLAPolicy] = None
+        if getattr(config, "init_from_policy_path", ""):
+            init_policy = SmolVLAPolicy.from_pretrained(str(config.init_from_policy_path))
+            base_cfg = init_policy.config
+            # Avoid overriding experiment wiring knobs.
+            skip = {
+                "device",
+                "push_to_hub",
+            }
+            for k, v in vars(base_cfg).items():
+                if k in skip:
+                    continue
+                if hasattr(config, k):
+                    try:
+                        setattr(config, k, v)
+                    except Exception:
+                        # Best-effort; ignore read-only / computed fields.
+                        pass
+
         # NOTE: SmolVLAPolicy.__init__ calls self.reset(); initialize our state first so the
         # override doesn't access missing attributes during base init.
         self.config: SmolVLAWorldConfig = config
@@ -226,30 +248,22 @@ class SmolVLAWorldPolicy(SmolVLAPolicy):
         if self.config.log_grad_stats:
             self._register_grad_hooks()
 
-        if self.config.init_from_policy_path:
-            self._init_from_policy(self.config.init_from_policy_path, strict=bool(self.config.init_from_strict))
+        if init_policy is not None:
+            incompatible = self.load_state_dict(init_policy.state_dict(), strict=False)
+            missing = getattr(incompatible, "missing_keys", [])
+            unexpected = getattr(incompatible, "unexpected_keys", [])
+            if bool(self.config.init_from_strict) and unexpected:
+                raise RuntimeError(f"Unexpected keys when loading init policy: {unexpected[:50]}")
+            if bool(self.config.init_from_strict):
+                if any(k.startswith("model.") for k in missing):
+                    raise RuntimeError(
+                        "Init policy load missed core SmolVLA keys. Check that smolvla_world config "
+                        "(num layers/width) matches the init policy."
+                    )
 
     def reset(self):
         super().reset()
         self._world_hist.clear()
-
-    def _init_from_policy(self, policy_path: str, strict: bool) -> None:
-        # Load a baseline SmolVLA policy and copy matching weights into this policy.
-        # This avoids requiring `--policy.path` (which would force policy type=smolvla).
-        init_policy = SmolVLAPolicy.from_pretrained(policy_path)
-        incompatible = self.load_state_dict(init_policy.state_dict(), strict=False)
-        missing = getattr(incompatible, "missing_keys", [])
-        unexpected = getattr(incompatible, "unexpected_keys", [])
-        if strict and unexpected:
-            raise RuntimeError(f"Unexpected keys when loading init policy: {unexpected[:50]}")
-        if strict:
-            # If nothing loaded due to mismatch, this will be caught as shape mismatch earlier.
-            # Missing world-only keys is expected; missing core model keys is not.
-            if any(k.startswith("model.") for k in missing):
-                raise RuntimeError(
-                    "Init policy load missed core SmolVLA keys. Check that smolvla_world config "
-                    "(num layers/width) matches the init policy."
-                )
 
     def _register_grad_hooks(self) -> None:
         # Compute grad norms for world modules without modifying the LeRobot training loop.

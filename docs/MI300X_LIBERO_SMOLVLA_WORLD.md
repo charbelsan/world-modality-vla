@@ -112,12 +112,11 @@ Note: some LeRobot versions do not auto-discover policy plugins. This repo insta
 
 ### 2.1 Baseline (SmolVLA)
 Important: for a fair comparison against `smolvla_world`, baseline should start from the same pretrained
-weights (`lerobot/smolvla_base`).
+weights (recommended for LIBERO: `HuggingFaceVLA/smolvla_libero`).
 ```bash
-LEROBOT_WM_RENAME_MAP_JSON='{"observation.images.image":"observation.images.camera1","observation.images.image2":"observation.images.camera2"}' \
 lerobot-wm-train \
   --dataset.repo_id=HuggingFaceVLA/libero \
-  --policy.path=lerobot/smolvla_base \
+  --policy.path=HuggingFaceVLA/smolvla_libero \
   --policy.device=cuda \
   --policy.push_to_hub=false \
   --batch_size=64 \
@@ -127,8 +126,9 @@ lerobot-wm-train \
   --wandb.enable=false
 ```
 
-Note: this env var mapping is applied by `lerobot-wm-train` / `lerobot-wm-eval` and avoids JSON→dict parsing issues in some LeRobot/draccus setups.
-Some LeRobot versions also validate feature keys before preprocessors run; this repo patches that validation to honor `LEROBOT_WM_RENAME_MAP_JSON` as well.
+Note: if you use a checkpoint that expects camera keys like `camera1/camera2`, set:
+`LEROBOT_WM_RENAME_MAP_JSON='{"observation.images.image":"observation.images.camera1","observation.images.image2":"observation.images.camera2"}'`.
+This is applied by `lerobot-wm-train` / `lerobot-wm-eval` (including feature consistency validation).
 
 ### 2.2 World modality (SmolVLA + gated world cross-attn)
 Key knobs:
@@ -143,7 +143,7 @@ lerobot-wm-train \
   --policy.type=smolvla_world \
   --policy.device=cuda \
   --policy.push_to_hub=false \
-  --policy.init_from_policy_path=lerobot/smolvla_base \
+  --policy.init_from_policy_path=HuggingFaceVLA/smolvla_libero \
   --policy.dataset_repo_id=HuggingFaceVLA/libero \
   --policy.cache_dir=cache \
   --policy.world_latents_source=vjepa \
@@ -181,8 +181,7 @@ lerobot-wm-eval \
   --eval.batch_size=10
 ```
 
-Note: `lerobot/smolvla_base` expects camera keys like `observation.images.camera1`. LIBERO datasets use
-`observation.images.image` / `observation.images.image2`, so for evaluating the **E0 baseline** you should pass:
+Note: if you use a checkpoint that expects camera keys like `observation.images.camera1`, set:
 `LEROBOT_WM_RENAME_MAP_JSON='{"observation.images.image":"observation.images.camera1","observation.images.image2":"observation.images.camera2"}'`.
 
 ---
