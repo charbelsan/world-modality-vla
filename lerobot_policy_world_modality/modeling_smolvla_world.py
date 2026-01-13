@@ -191,13 +191,15 @@ class SmolVLAWorldPolicy(SmolVLAPolicy):
     name = "smolvla_world"
 
     def __init__(self, config: SmolVLAWorldConfig):
-        super().__init__(config)
+        # NOTE: SmolVLAPolicy.__init__ calls self.reset(); initialize our state first so the
+        # override doesn't access missing attributes during base init.
         self.config: SmolVLAWorldConfig = config
-
         self._latent_dim: int = int(config.world_latent_dim)
         self.prophet: Optional[Prophet] = None
         self.world_encoder: Optional[VisionEncoder] = None
         self._world_hist: deque[torch.Tensor] = deque(maxlen=int(config.context_frames))
+
+        super().__init__(config)
 
         if self.config.enable_world_predictor:
             self.prophet = Prophet(
@@ -372,6 +374,11 @@ class SmolVLAWorldPolicy(SmolVLAPolicy):
         z_future = batch.get("world_z_future", None)
         valid = batch.get("world_future_valid", None)
 
+        world_valid_frac = 0.0
+        world_mem_norm = 0.0
+        world_z_hist_norm = 0.0
+        world_z_future_norm = 0.0
+
         world_loss = torch.tensor(0.0, device=batch[ACTION].device)
         world_cos = 0.0
 
@@ -379,6 +386,11 @@ class SmolVLAWorldPolicy(SmolVLAPolicy):
             self._ensure_world_modules(int(z_hist.shape[-1]))
             assert valid is not None, "world_future_valid missing (expected from processor)"
             mem, world_loss, world_cos = self._build_world_memory_train(z_hist, z_future, valid)
+            world_valid_frac = float(valid.float().mean().detach().cpu().item())
+            world_z_hist_norm = float(z_hist[:, -1, :].float().norm(dim=-1).mean().detach().cpu().item())
+            world_z_future_norm = float(z_future.float().norm(dim=-1).mean().detach().cpu().item())
+            if mem is not None:
+                world_mem_norm = float(mem.float().norm(dim=-1).mean().detach().cpu().item())
             if isinstance(self.model, WorldInjectedVLAFlowMatching):
                 self.model.set_world_memory(mem)
         else:
@@ -393,6 +405,10 @@ class SmolVLAWorldPolicy(SmolVLAPolicy):
 
         metrics["world_loss"] = float(world_loss.detach().cpu().item())
         metrics["world_cos"] = float(world_cos)
+        metrics["world_valid_frac"] = float(world_valid_frac)
+        metrics["world_mem_norm"] = float(world_mem_norm)
+        metrics["world_z_hist_norm"] = float(world_z_hist_norm)
+        metrics["world_z_future_norm"] = float(world_z_future_norm)
         if isinstance(self.model, WorldInjectedVLAFlowMatching):
             metrics["world_gate"] = self.model.world_gate_value()
             if self.config.log_attn_stats:

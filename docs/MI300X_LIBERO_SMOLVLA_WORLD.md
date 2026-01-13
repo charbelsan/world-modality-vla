@@ -76,6 +76,32 @@ python -m world_modality.precompute_world_latents \
 This produces (example):
 `cache/HuggingFaceVLA/libero/train_world_latents_vjepa_m4.fp16.npy`
 
+### 1.1 Smoke test (recommended)
+Before launching long runs, verify the plugin policy + cached-latent plumbing works:
+```bash
+lerobot-wm-train \
+  --dataset.repo_id=HuggingFaceVLA/libero \
+  --policy.type=smolvla_world \
+  --policy.device=cuda \
+  --policy.push_to_hub=false \
+  --policy.init_from_policy_path=lerobot/smolvla_base \
+  --policy.dataset_repo_id=HuggingFaceVLA/libero \
+  --policy.cache_dir=cache \
+  --policy.world_latents_source=vjepa \
+  --policy.latent_suffix=m4 \
+  --policy.world_latent_dim=1408 \
+  --policy.context_frames=4 \
+  --policy.future_offset=8 \
+  --policy.lambda_world=0.2 \
+  --policy.world_memory_mode_train=pred \
+  --policy.enable_world_injection=true \
+  --batch_size=2 \
+  --steps=2 \
+  --output_dir outputs/smoke/smolvla_world_steps2 \
+  --seed=0 \
+  --wandb.enable=false
+```
+
 ---
 
 ## 2) Train baseline vs world-modality
@@ -160,7 +186,7 @@ Note: `lerobot/smolvla_base` expects camera keys like `observation.images.camera
 
 ## 4) Recommended experiment matrix (minimal, high-signal)
 
-Run with 2–3 seeds each:
+Start with 1 seed to validate plumbing, then scale to 2–3 seeds:
 
 - **E0**: `smolvla` baseline
 - **E1**: `smolvla_world` with `world_memory_mode_train=zero` (capacity control)
@@ -177,6 +203,8 @@ Optional plumbing checks (training-only):
 LeRobot logs policy outputs from `forward()`; `smolvla_world` adds:
 - `world_loss` (aux loss, masked near episode end)
 - `world_cos` (diagnostic cosine similarity)
+- `world_valid_frac` (fraction of future steps that are valid / not past episode end)
+- `world_mem_norm`, `world_z_hist_norm`, `world_z_future_norm` (sanity for scale / collapse)
 - `world_gate` (tanh(gate), should move off 0 if memory is used)
 - `world_attn_entropy`, `world_attn_pmax`, `world_ctx_norm`, `world_act_norm` (if `policy.log_attn_stats=true`)
 - `grad_world_inject`, `grad_prophet` (previous-step grad norms; if `policy.log_grad_stats=true`)

@@ -1,6 +1,6 @@
 # World Modality Research Analysis
 
-**Last updated:** January 12, 2026
+**Last updated:** January 13, 2026
 **Status:** Qwen+`<ACT_i>` pipeline still yields 0% LIBERO SR → switch to a known-working LIBERO policy (SmolVLA) and test world modality as a surgical augmentation
 
 ---
@@ -64,7 +64,7 @@ This repo provides a LeRobot policy plugin:
 
 ## 5. Current Experiment Matrix (minimal, high-signal)
 
-Run 2–3 seeds each; start on `libero_spatial`, then expand suites.
+Start with 1 seed to validate plumbing; only then scale to 2–3 seeds and more suites.
 
 - **E0**: `policy.type=smolvla` (baseline)
 - **E1**: `policy.type=smolvla_world` with `policy.world_memory_mode_train=zero` (capacity control)
@@ -81,7 +81,7 @@ Optional offline-only plumbing checks:
 
 ### Required logs (for interpretability)
 `smolvla_world` logs (via LeRobot train loop):
-- `world_gate`, `world_loss`, `world_cos`, `loss_total`
+- `world_gate`, `world_loss`, `world_cos`, `world_valid_frac`, `world_mem_norm`, `world_z_hist_norm`, `world_z_future_norm`, `loss_total`
 - `world_attn_entropy`, `world_attn_pmax`, `world_ctx_norm`, `world_act_norm` (if enabled)
 - `grad_world_inject`, `grad_prophet` (previous-step grad norms; if enabled)
 
@@ -89,6 +89,6 @@ Optional offline-only plumbing checks:
 
 ## 6. Sanity Gates (must pass before SR conclusions)
 
-1) Demo replay in env succeeds at non-trivial rate (validates action/control semantics)
-2) `lerobot-eval` on a known-good policy yields non-zero SR in the same env install
-
+1) Smoke train runs (`--steps=2`) for `smolvla_world` (validates policy/plugin + cache wiring)
+2) E0 fine-tune runs end-to-end (validates dataset feature naming; see `--rename_map` note in MI300X runbook)
+3) `lerobot-wm-eval` on the resulting checkpoints yields non-zero SR on at least one suite/seed before concluding anything about E1/E2
