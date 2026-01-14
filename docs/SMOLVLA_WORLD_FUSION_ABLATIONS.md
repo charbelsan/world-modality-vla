@@ -134,3 +134,49 @@ Logging:
 3) **Keep sample budget fixed**
    - Use `TOTAL_SAMPLES` in `scripts/run_mi300x_smolvla_world_matrix.sh` to compare fairly across batch sizes.
 
+---
+
+## Imagination Bank: multiple future hypotheses (world as a retrieval-like modality)
+
+This is the closest implementation to the original vision:
+> “World is a modality like images; the policy cross-attends to a bank of imagined futures and selects what it needs.”
+
+### Motivation
+The current E2 setup largely provides a *single* predicted future sequence `mem = ẑ_{t+1:t+K}`.
+That limits “selection” to a single trajectory.
+
+An **imagination bank** provides **N** candidate futures:
+- `mem = concat([ẑ^(1), ẑ^(2), …, ẑ^(N)])` where each `ẑ^(i)` is `[B, K, D]`
+- The policy cross-attention can then “retrieve” the most relevant futures/timesteps for the current action decision.
+
+### Minimal implementation plan (does not reproduce FLARE)
+Keep the current external-memory fusion (cross-attn into expert or prefix), but change only **how `mem` is built**.
+
+1) Add config knobs (future work):
+   - `world_num_hypotheses: int` (N, default 1)
+   - `world_hypothesis_method: str` (`dropout|noise|ensemble|mixture`)
+   - Optional: `world_best_of_n: bool` (training loss is min/soft-min across hypotheses)
+
+2) Generate N predicted futures from the same `z_hist`:
+   - **Dropout sampling**: keep dropout on in Prophet at inference/training for sampling diversity.
+   - **Noise injection**: add small Gaussian noise to query slots / Prophet inputs.
+   - **Ensemble**: multiple Prophet heads (heavier).
+
+3) Form the memory tensor:
+   - `mem = z_pred_abs.reshape(B, N*K, D)` (or keep `[B, N, K, D]` and flatten for attention).
+   - Feed to the same `GatedCrossAttention(act_h, mem)`.
+
+4) Training objective options:
+   - **Single-target alignment** (current): loss computed on a single “mean” prediction.
+   - **Best-of-N**: `L = min_i (1 - cos(ẑ^(i), z_target))` (or soft-min / log-sum-exp).
+     This matches the “multiple plausible futures” intuition without making the world branch action-conditioned.
+
+### What to expect (interpretability)
+If the imagination bank is useful, you should see:
+- `world_gate` opens and stays open.
+- Attention becomes “spiky” over hypotheses (`attn_pmax` increases, entropy drops).
+- SR improves vs single-hypothesis E2, especially on ambiguous tasks (multiple valid futures).
+
+If it fails:
+- Gates stay near 0 (model ignores the bank), or attention stays diffuse across hypotheses.
+- SR unchanged vs E2, suggesting either the policy already has enough information or the world representation is not helpful.
