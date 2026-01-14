@@ -12,6 +12,12 @@ from lerobot.processor import (
     ProcessorStepRegistry,
 )
 from lerobot.processor.batch_processor import AddBatchDimensionProcessorStep
+from lerobot.processor.converters import (  # type: ignore
+    batch_to_transition,
+    policy_action_to_transition,
+    transition_to_batch,
+    transition_to_policy_action,
+)
 from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
 
 from lerobot.policies.smolvla.processor_smolvla import make_smolvla_pre_post_processors
@@ -75,11 +81,30 @@ class WorldLatentsFromCacheStep(ComplementaryDataProcessorStep):
 def make_smolvla_world_pre_post_processors(
     config: SmolVLAWorldConfig,
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
+    processors_pretrained_path: str | None = None,
 ) -> tuple[
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
 ]:
-    pre, post = make_smolvla_pre_post_processors(config, dataset_stats=dataset_stats)
+    if processors_pretrained_path:
+        # Load exact processors from the init checkpoint (smolvla_libero recommended) to avoid
+        # action normalization / convention mismatches versus `--policy.path` baselines.
+        pre = PolicyProcessorPipeline.from_pretrained(
+            pretrained_model_name_or_path=processors_pretrained_path,
+            config_filename=f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json",
+            overrides={},
+            to_transition=batch_to_transition,
+            to_output=transition_to_batch,
+        )
+        post = PolicyProcessorPipeline.from_pretrained(
+            pretrained_model_name_or_path=processors_pretrained_path,
+            config_filename=f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json",
+            overrides={},
+            to_transition=policy_action_to_transition,
+            to_output=transition_to_policy_action,
+        )
+    else:
+        pre, post = make_smolvla_pre_post_processors(config, dataset_stats=dataset_stats)
 
     # Insert our cache step after AddBatchDimension so `index` is batched, and before Device so it gets moved.
     step = WorldLatentsFromCacheStep(

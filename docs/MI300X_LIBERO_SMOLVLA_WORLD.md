@@ -244,6 +244,11 @@ If you observe a collapse (e.g., E1 at ~0% SR while E0 is high), suspect numeric
 This repo includes a do-no-harm fast-path that skips world-memory computation and cross-attention when the gate is
 effectively closed.
 
+If the issue persists with finite memory, suspect a **processor mismatch**:
+E0 baselines loaded with `--policy.path=...` load pre/post processors (normalization, action conventions) from that
+checkpoint. `smolvla_world` now loads processors from `policy.init_from_policy_path` when set, so E0 and E1/E2 use
+the same processors. Re-run eval after pulling latest changes.
+
 ---
 
 ## 6) Parallel launch (MI300X)

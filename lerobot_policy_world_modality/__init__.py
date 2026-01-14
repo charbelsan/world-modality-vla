@@ -94,8 +94,16 @@ def _patch_lerobot_factories() -> None:
 
     def make_pre_post_processors(policy_cfg, pretrained_path=None, **kwargs):  # type: ignore[no-untyped-def]
         if isinstance(policy_cfg, SmolVLAWorldConfig):
+            processors_pretrained_path = None
+            init_path = str(getattr(policy_cfg, "init_from_policy_path", "") or "").strip()
+            if init_path:
+                processors_pretrained_path = init_path
+            elif pretrained_path:
+                processors_pretrained_path = pretrained_path
             pre, post = make_smolvla_world_pre_post_processors(
-                config=policy_cfg, dataset_stats=kwargs.get("dataset_stats")
+                config=policy_cfg,
+                dataset_stats=kwargs.get("dataset_stats"),
+                processors_pretrained_path=processors_pretrained_path,
             )
         else:
             pre, post = orig_make_pre_post_processors(
