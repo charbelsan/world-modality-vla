@@ -108,7 +108,9 @@ class WorldInjectedVLAFlowMatching(VLAFlowMatching):
     def _inject(self, suffix_out: torch.Tensor) -> torch.Tensor:
         if self.world_inject is None or self._world_memory is None:
             return suffix_out
-        return self.world_inject(suffix_out, self._world_memory)
+        # GatedCrossAttention is float32; cast world_memory if needed (encoder may output float16).
+        mem = self._world_memory.float() if self._world_memory.dtype != suffix_out.dtype else self._world_memory
+        return self.world_inject(suffix_out, mem)
 
     def world_last_stats(self) -> dict[str, float]:
         if self.world_inject is None:
@@ -313,7 +315,8 @@ class SmolVLAWorldPolicy(SmolVLAPolicy):
         if self.prophet is None:
             z_pred = torch.zeros_like(z_future)
         else:
-            z_pred = self.prophet(z_hist)
+            # Prophet is float32; cast if cached latents are float16.
+            z_pred = self.prophet(z_hist.float())
 
         if self.config.delta_prediction:
             z_pred_abs = z_current + z_pred
