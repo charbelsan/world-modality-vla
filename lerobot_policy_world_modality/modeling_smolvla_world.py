@@ -455,7 +455,11 @@ class SmolVLAWorldPolicy(SmolVLAPolicy):
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor], noise: Tensor | None = None, **kwargs):
         if isinstance(self.model, WorldInjectedVLAFlowMatching):
-            images, _ = self.prepare_images(batch)
-            mem = self._build_world_memory_rollout(images)
-            self.model.set_world_memory(mem if self.config.enable_world_injection else None)
+            # Only compute world memory if injection is enabled
+            if self.config.enable_world_injection:
+                images, _ = self.prepare_images(batch)
+                mem = self._build_world_memory_rollout(images)
+                self.model.set_world_memory(mem)
+            else:
+                self.model.set_world_memory(None)
         return super().select_action(batch, noise=noise, **kwargs)
