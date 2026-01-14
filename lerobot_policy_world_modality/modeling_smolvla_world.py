@@ -455,11 +455,16 @@ class SmolVLAWorldPolicy(SmolVLAPolicy):
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor], noise: Tensor | None = None, **kwargs):
         if isinstance(self.model, WorldInjectedVLAFlowMatching):
-            # Only compute world memory if injection is enabled
-            if self.config.enable_world_injection:
+            # Do-no-harm: if the gate is effectively closed, don't even compute the world memory.
+            # This avoids expensive vision/proph runs and prevents NaN/Inf in that path from
+            # contaminating actions.
+            gate = float(self.model.world_gate_value())
+            if (not self.config.enable_world_injection) or abs(gate) < 1e-6:
+                self.model.set_world_memory(None)
+            else:
                 images, _ = self.prepare_images(batch)
                 mem = self._build_world_memory_rollout(images)
+                if mem is not None and (not torch.isfinite(mem).all()):
+                    mem = None
                 self.model.set_world_memory(mem)
-            else:
-                self.model.set_world_memory(None)
         return super().select_action(batch, noise=noise, **kwargs)

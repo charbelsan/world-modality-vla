@@ -235,6 +235,12 @@ LeRobot logs policy outputs from `forward()`; `smolvla_world` adds:
 - `grad_world_inject`, `grad_prophet` (previous-step grad norms; if `policy.log_grad_stats=true`)
 - `loss_total` (action + lambda_world*world_loss)
 
+### 5.1 If `smolvla_world` SR collapses but `world_gate≈0`
+If `world_gate` stays near 0 (closed gate), `smolvla_world` should behave like the baseline.
+If you observe a collapse (e.g., E1 at ~0% SR while E0 is high), suspect numerical issues in the world-memory path.
+This repo includes a do-no-harm fast-path that skips world-memory computation and cross-attention when the gate is
+effectively closed.
+
 ---
 
 ## 6) Parallel launch (MI300X)

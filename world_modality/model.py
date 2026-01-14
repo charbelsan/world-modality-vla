@@ -120,7 +120,17 @@ class GatedCrossAttention(nn.Module):
         self._last_stats: dict[str, float] = {}
 
     def forward(self, act_h: torch.Tensor, future_memory: torch.Tensor) -> torch.Tensor:
-        kv = self.future_proj(future_memory)  # [B, K, d_model]
+        gate = torch.tanh(self.gate).to(dtype=act_h.dtype)
+
+        # Do-no-harm: when the gate is effectively closed, skip cross-attention entirely.
+        # This avoids needless compute and prevents NaN/Inf in the memory path from
+        # contaminating actions via `0 * NaN = NaN`.
+        if float(gate.abs().detach().cpu().item()) < 1e-6:
+            return act_h
+        if not torch.isfinite(future_memory).all():
+            return act_h
+
+        kv = self.future_proj(future_memory.to(dtype=act_h.dtype))  # [B, K, d_model]
         ctx, attn = self.cross_attn(
             query=act_h,
             key=kv,
@@ -128,7 +138,6 @@ class GatedCrossAttention(nn.Module):
             need_weights=self.track_stats,
             average_attn_weights=False if self.track_stats else True,
         )
-        gate = torch.tanh(self.gate)
         out = act_h + gate * ctx
         if self.track_stats and attn is not None:
             # attn: [B, heads, Q, K] when average_attn_weights=False
