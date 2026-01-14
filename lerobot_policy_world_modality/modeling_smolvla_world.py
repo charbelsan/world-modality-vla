@@ -63,6 +63,12 @@ class WorldInjectedVLAFlowMatching(VLAFlowMatching):
         inject_num_heads: int,
         gate_init: float,
         enable_world_injection: bool,
+        inject_suffix_in: bool,
+        prefix_tokens: int,
+        prefix_block: str,
+        prefix_gate_init: float,
+        prefix_cross_attn: bool,
+        prefix_num_heads: int,
         track_stats: bool,
     ):
         # Do not call VLAFlowMatching.__init__ (it would allocate a second VLM).
@@ -87,6 +93,19 @@ class WorldInjectedVLAFlowMatching(VLAFlowMatching):
 
         self._world_memory: Optional[torch.Tensor] = None
         self.world_inject = None
+        self.world_inject_suffix_in = None
+        self.world_prefix_inject = None
+        self.world_prefix_proj = None
+        self.world_prefix_gate = None
+
+        self.world_prefix_tokens = int(prefix_tokens)
+        self.world_prefix_block = str(prefix_block)
+
+        try:
+            self._prefix_hidden_size = int(self.vlm_with_expert.config.text_config.hidden_size)
+        except Exception:  # pragma: no cover
+            self._prefix_hidden_size = int(self.vlm_with_expert.expert_hidden_size)
+
         if bool(enable_world_injection):
             self.world_inject = GatedCrossAttention(
                 d_model=self.vlm_with_expert.expert_hidden_size,
@@ -97,6 +116,30 @@ class WorldInjectedVLAFlowMatching(VLAFlowMatching):
             with torch.no_grad():
                 self.world_inject.gate.copy_(torch.tensor(float(gate_init)))
 
+            if bool(inject_suffix_in):
+                self.world_inject_suffix_in = GatedCrossAttention(
+                    d_model=self.vlm_with_expert.expert_hidden_size,
+                    n_heads=int(inject_num_heads),
+                    future_dim=int(future_dim),
+                    track_stats=False,
+                )
+                with torch.no_grad():
+                    self.world_inject_suffix_in.gate.copy_(torch.tensor(float(gate_init)))
+
+        # Prefix fusion ablations (F3)
+        if int(self.world_prefix_tokens) > 0:
+            self.world_prefix_proj = nn.Linear(int(future_dim), int(self._prefix_hidden_size))
+            self.world_prefix_gate = nn.Parameter(torch.tensor(float(prefix_gate_init)))
+        if bool(prefix_cross_attn):
+            self.world_prefix_inject = GatedCrossAttention(
+                d_model=int(self._prefix_hidden_size),
+                n_heads=int(prefix_num_heads),
+                future_dim=int(future_dim),
+                track_stats=False,
+            )
+            with torch.no_grad():
+                self.world_prefix_inject.gate.copy_(torch.tensor(float(prefix_gate_init)))
+
     def set_world_memory(self, world_memory: Optional[torch.Tensor]) -> None:
         self._world_memory = world_memory
 
@@ -105,12 +148,96 @@ class WorldInjectedVLAFlowMatching(VLAFlowMatching):
             return 0.0
         return float(torch.tanh(self.world_inject.gate).detach().cpu().item())
 
+    def world_gate_suffix_in_value(self) -> float:
+        if self.world_inject_suffix_in is None:
+            return 0.0
+        return float(torch.tanh(self.world_inject_suffix_in.gate).detach().cpu().item())
+
+    def world_gate_prefix_value(self) -> float:
+        if self.world_prefix_gate is None:
+            return 0.0
+        return float(torch.tanh(self.world_prefix_gate).detach().cpu().item())
+
+    def world_gate_prefix_cross_value(self) -> float:
+        if self.world_prefix_inject is None:
+            return 0.0
+        return float(torch.tanh(self.world_prefix_inject.gate).detach().cpu().item())
+
+    def world_requires_memory(self, eps: float = 1e-6) -> bool:
+        """Return True if any enabled fusion path has an open gate."""
+        if self._world_memory is None:
+            # Still return based on gates to decide whether to compute memory upstream.
+            pass
+        if self.world_inject is not None and abs(self.world_gate_value()) >= eps:
+            return True
+        if self.world_inject_suffix_in is not None and abs(self.world_gate_suffix_in_value()) >= eps:
+            return True
+        if self.world_prefix_proj is not None and abs(self.world_gate_prefix_value()) >= eps:
+            return True
+        if self.world_prefix_inject is not None and abs(self.world_gate_prefix_cross_value()) >= eps:
+            return True
+        return False
+
     def _inject(self, suffix_out: torch.Tensor) -> torch.Tensor:
         if self.world_inject is None or self._world_memory is None:
             return suffix_out
         # GatedCrossAttention is float32; cast world_memory if needed (encoder may output float16).
         mem = self._world_memory.float() if self._world_memory.dtype != suffix_out.dtype else self._world_memory
         return self.world_inject(suffix_out, mem)
+
+    def _inject_suffix_in(self, suffix_embs: torch.Tensor) -> torch.Tensor:
+        if self.world_inject_suffix_in is None or self._world_memory is None:
+            return suffix_embs
+        mem = self._world_memory.float() if self._world_memory.dtype != suffix_embs.dtype else self._world_memory
+        return self.world_inject_suffix_in(suffix_embs, mem)
+
+    def _prefix_block_value(self) -> int:
+        if self.world_prefix_block == "prefix":
+            return 0
+        return 1  # default "state"
+
+    def _append_prefix_tokens(
+        self, embs: torch.Tensor, pad_masks: torch.Tensor, att_masks: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        if self._world_memory is None or self.world_prefix_proj is None or self.world_prefix_gate is None:
+            return embs, pad_masks, att_masks
+        if int(self.world_prefix_tokens) <= 0:
+            return embs, pad_masks, att_masks
+        if not torch.isfinite(self._world_memory).all():
+            return embs, pad_masks, att_masks
+
+        gate = torch.tanh(self.world_prefix_gate).to(dtype=embs.dtype)
+        if float(gate.abs().detach().cpu().item()) < 1e-6:
+            return embs, pad_masks, att_masks
+
+        B, L, _ = embs.shape
+        lengths = pad_masks.long().sum(dim=1)  # [B]
+        K = min(int(self.world_prefix_tokens), int(self._world_memory.shape[1]))
+        if K <= 0:
+            return embs, pad_masks, att_masks
+
+        tok = gate * self.world_prefix_proj(self._world_memory[:, :K, :].to(dtype=embs.dtype))
+        block_val = self._prefix_block_value()
+
+        for b in range(B):
+            start = int(lengths[b].item())
+            if start >= L:
+                continue
+            n = min(K, L - start)
+            if n <= 0:
+                continue
+            embs[b, start : start + n, :] = tok[b, :n, :]
+            pad_masks[b, start : start + n] = True
+            att_masks[b, start : start + n] = block_val
+
+        return embs, pad_masks, att_masks
+
+    def embed_prefix(self, images, img_masks, lang_tokens, lang_masks, state: torch.Tensor = None):
+        embs, pad_masks, att_masks = super().embed_prefix(images, img_masks, lang_tokens, lang_masks, state=state)
+        if self.world_prefix_inject is not None and self._world_memory is not None:
+            embs = self.world_prefix_inject(embs, self._world_memory)
+        embs, pad_masks, att_masks = self._append_prefix_tokens(embs, pad_masks, att_masks)
+        return embs, pad_masks, att_masks
 
     def world_last_stats(self) -> dict[str, float]:
         if self.world_inject is None:
@@ -134,6 +261,7 @@ class WorldInjectedVLAFlowMatching(VLAFlowMatching):
             images, img_masks, lang_tokens, lang_masks, state=state
         )
         suffix_embs, suffix_pad_masks, suffix_att_masks = self.embed_suffix(x_t, time)
+        suffix_embs = self._inject_suffix_in(suffix_embs)
 
         pad_masks = torch.cat([prefix_pad_masks, suffix_pad_masks], dim=1)
         att_masks = torch.cat([prefix_att_masks, suffix_att_masks], dim=1)
@@ -158,6 +286,7 @@ class WorldInjectedVLAFlowMatching(VLAFlowMatching):
     def denoise_step(self, prefix_pad_masks, past_key_values, x_t, timestep):
         # Copy of VLAFlowMatching.denoise_step with injection before action_out_proj.
         suffix_embs, suffix_pad_masks, suffix_att_masks = self.embed_suffix(x_t, timestep)
+        suffix_embs = self._inject_suffix_in(suffix_embs)
 
         suffix_len = suffix_pad_masks.shape[1]
         batch_size = prefix_pad_masks.shape[0]
@@ -242,6 +371,12 @@ class SmolVLAWorldPolicy(SmolVLAPolicy):
             inject_num_heads=int(self.config.world_inject_num_heads),
             gate_init=float(self.config.world_gate_init),
             enable_world_injection=bool(self.config.enable_world_injection),
+            inject_suffix_in=bool(self.config.world_inject_suffix_in),
+            prefix_tokens=int(self.config.world_prefix_tokens),
+            prefix_block=str(self.config.world_prefix_block),
+            prefix_gate_init=float(self.config.world_prefix_gate_init),
+            prefix_cross_attn=bool(self.config.world_prefix_cross_attn),
+            prefix_num_heads=int(self.config.world_prefix_num_heads),
             track_stats=bool(self.config.log_attn_stats),
         )
 
@@ -443,6 +578,9 @@ class SmolVLAWorldPolicy(SmolVLAPolicy):
         metrics["world_z_future_norm"] = float(world_z_future_norm)
         if isinstance(self.model, WorldInjectedVLAFlowMatching):
             metrics["world_gate"] = self.model.world_gate_value()
+            metrics["world_gate_suffix_in"] = self.model.world_gate_suffix_in_value()
+            metrics["world_gate_prefix"] = self.model.world_gate_prefix_value()
+            metrics["world_gate_prefix_cross"] = self.model.world_gate_prefix_cross_value()
             if self.config.log_attn_stats:
                 stats = self.model.world_last_stats()
                 for k, v in stats.items():
@@ -458,8 +596,7 @@ class SmolVLAWorldPolicy(SmolVLAPolicy):
             # Do-no-harm: if the gate is effectively closed, don't even compute the world memory.
             # This avoids expensive vision/proph runs and prevents NaN/Inf in that path from
             # contaminating actions.
-            gate = float(self.model.world_gate_value())
-            if (not self.config.enable_world_injection) or abs(gate) < 1e-6:
+            if (not self.config.enable_world_injection) or (not self.model.world_requires_memory(1e-6)):
                 self.model.set_world_memory(None)
             else:
                 images, _ = self.prepare_images(batch)

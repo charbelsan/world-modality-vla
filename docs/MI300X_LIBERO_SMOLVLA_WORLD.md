@@ -221,6 +221,9 @@ Optional plumbing checks (training-only):
 - **Oracle**: `world_memory_mode_train=oracle` (upper bound; not a closed-loop mode)
 - **Shuffle/Random**: should not help; if they do, you’re likely seeing a bug or a regularization effect.
 
+If E2 does not improve SR vs E0, consider the earlier-fusion ablations (F1–F3):
+`docs/SMOLVLA_WORLD_FUSION_ABLATIONS.md`
+
 ---
 
 ## 5) What to watch in logs

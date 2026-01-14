@@ -52,6 +52,23 @@ class SmolVLAWorldConfig(SmolVLAConfig):
     log_grad_stats: bool = True
     world_memory_mode_rollout: str = "pred"  # "pred" | "zero" | "random"
 
+    # ---- Optional fusion ablations (F2/F3) ----
+    # F2: inject world memory into the *suffix input embeddings* (earlier in the expert path).
+    world_inject_suffix_in: bool = False
+
+    # F3a: treat world as prefix modality by inserting projected world tokens into the prefix padding.
+    # 0 disables. When >0, inserts up to this many tokens (clipped by available prefix padding).
+    world_prefix_tokens: int = 0
+    # Attention block for inserted prefix tokens:
+    # - "state": mask_ar=1 (image/lang cannot attend to world; state/actions can)
+    # - "prefix": mask_ar=0 (world tokens join image/lang block; full token competition)
+    world_prefix_block: str = "state"
+    world_prefix_gate_init: float = 0.0
+
+    # F3b: cross-attend from prefix embeddings into world memory (gated), without adding tokens.
+    world_prefix_cross_attn: bool = False
+    world_prefix_num_heads: int = 8
+
     # ---- World predictor (Prophet) ----
     enable_world_predictor: bool = True
     prophet_layers: int = 2
