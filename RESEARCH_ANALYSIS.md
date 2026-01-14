@@ -1,7 +1,7 @@
 # World Modality Research Analysis
 
-**Last updated:** January 13, 2026
-**Status:** Qwen+`<ACT_i>` pipeline still yields 0% LIBERO SR → switch to a known-working LIBERO policy (SmolVLA) and test world modality as a surgical augmentation
+**Last updated:** January 14, 2026
+**Status:** SmolVLA baseline validated (~89.5% SR on `libero_spatial`). E1 (capacity control) matches baseline after processor fix. E2 (world_pred) training/eval in progress.
 
 ---
 
@@ -92,3 +92,49 @@ Optional offline-only plumbing checks:
 1) Smoke train runs (`--steps=2`) for `smolvla_world` (validates policy/plugin + cache wiring)
 2) E0 fine-tune runs end-to-end (validates dataset feature naming; see `--rename_map` note in MI300X runbook)
 3) `lerobot-wm-eval` on the resulting checkpoints yields non-zero SR on at least one suite/seed before concluding anything about E1/E2
+
+---
+
+## 7. January 14, 2026 Results (SmolVLA + World Modality)
+
+### 7.1 Experiment Status
+
+As of **January 14, 2026** (MI300X VM run; `libero_spatial`, 10 tasks).
+
+| Experiment | Config | Training | Eval SR | Notes |
+|------------|--------|----------|---------|-------|
+| **E0** | `smolvla` baseline | 50K steps | **89.5%** | Sanity gate passed |
+| **E1** | `smolvla_world` + `world_memory_mode_train=zero` | 50K steps | **~90%** (in progress) | Capacity control |
+| **E2** | `smolvla_world` + `world_memory_mode_train=pred` | in progress | TBD | Main hypothesis |
+
+### 7.2 Bugs Fixed
+
+1. **Processor mismatch** (commit `16672bc`): `smolvla_world` was building new pre/post processors from `dataset_stats` instead of loading the saved processors from the init checkpoint (`policy.init_from_policy_path`). This caused action convention / unnormalization mismatch → 0% SR despite good E0.
+
+2. **Do-no-harm numeric guards**: skip fusion when the gate is effectively closed, and ignore non-finite world memory to avoid contaminating actions (e.g., `0 * NaN = NaN`).
+
+### 7.3 Do-No-Harm Validation (E1 vs E0)
+
+After fixing the processor mismatch, **E1 (world_zero)** matches **E0** on SR (in-progress but already near baseline).
+
+Interpretation:
+- With `world_memory_mode_train=zero`, the injected memory is uninformative by design.
+- If the gate stays near 0, `smolvla_world` should behave like baseline SmolVLA (do‑no‑harm).
+- The observed E1≈E0 outcome validates that the plugin wiring does not break control semantics.
+
+### 7.4 Interpretation
+
+- **E0 = 89.5%**: Baseline works. Sanity gate passed.
+- **E1 ≈ E0**: Expected. Proves extra parameters (Prophet, GatedCrossAttention) don't help when gate=0.
+- **E2 > E0?**: TBD. This is the main hypothesis test.
+
+If E2 significantly outperforms E0:
+- World modality (predicted V-JEPA futures) improves control
+- The improvement is due to world information, not extra capacity (since E1 ≈ E0)
+
+### 7.5 Next Steps
+
+1. Complete E1 eval across all 10 libero_spatial tasks
+2. Complete E2 training (50K steps)
+3. Run E2 eval
+4. If E2 > E0: run ablations (`world_memory_mode_rollout=zero/random`) to confirm world info is used
