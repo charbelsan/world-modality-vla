@@ -381,7 +381,9 @@ class SmolVLAWorldPolicy(SmolVLAPolicy):
                 dtype=z_hist.dtype,
             )
 
-        z_pred = self.prophet(z_hist)
+        # Prophet is in float32; cast z_hist if needed (world encoder may output float16).
+        z_hist_f = z_hist.float()
+        z_pred = self.prophet(z_hist_f)
         if self.config.delta_prediction:
             z_current = z_hist[:, -1:, :]
             return z_current + z_pred
