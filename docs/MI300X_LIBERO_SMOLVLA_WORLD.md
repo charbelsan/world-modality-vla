@@ -238,6 +238,51 @@ LeRobot logs policy outputs from `forward()`; `smolvla_world` adds:
 - `grad_world_inject`, `grad_prophet` (previous-step grad norms; if `policy.log_grad_stats=true`)
 - `loss_total` (action + lambda_world*world_loss)
 
+---
+
+## 6) Rollout memory modes (how to interpret `world_memory_mode_rollout`)
+
+During **closed-loop** rollouts, cached latents are unavailable, so `smolvla_world` computes world memory online.
+
+`--policy.world_memory_mode_rollout=...` controls what memory is injected:
+- `pred` (default): use Prophet prediction `ẑ_{t+1:t+K}` (main hypothesis mode)
+- `zero`: inject zeros (tests “do-no-harm” at inference; memory content removed)
+- `random`: inject Gaussian noise (tests whether *memory quality* matters vs “extra input”)
+
+Useful ablation rule:
+- If `pred` > `zero` and `random` < `pred`, then the policy is likely using the world information (not just capacity).
+
+---
+
+## 7) Post-hoc log analysis (no W&B required)
+
+If you saved logs to a file (e.g. `/tmp/train_matrix_v2.log`), convert them to CSV + HTML plots:
+```bash
+python3 scripts/analyze_lerobot_logs.py \
+  --log /tmp/train_matrix_v2.log \
+  --out outputs/analysis/train_matrix_v2
+```
+
+This writes one subfolder per run (detected from the launcher’s `=== Train ... ===` markers):
+- `metrics.csv` (all parsed scalar metrics)
+- `stats.json` (min/max/last per key)
+- `plot.html` (if `plotly` is installed; otherwise omitted)
+
+---
+
+## 8) Queue work after a long eval (don’t leave the GPU idle overnight)
+
+When launching a long eval, capture its PID:
+```bash
+nohup bash -lc 'MUJOCO_GL=osmesa lerobot-wm-eval ...' > /tmp/e2_eval.log 2>&1 & echo $! > /tmp/e2_eval.pid
+```
+
+Then queue any follow-up command/script to run when that PID exits:
+```bash
+nohup ./scripts/wait_for_pid_then_run.sh /tmp/e2_eval.pid ./scripts/run_next_jobs.sh \
+  > /tmp/queue_after_eval.log 2>&1 &
+```
+
 ### 5.1 If `smolvla_world` SR collapses but `world_gate≈0`
 If `world_gate` stays near 0 (closed gate), `smolvla_world` should behave like the baseline.
 If you observe a collapse (e.g., E1 at ~0% SR while E0 is high), suspect numerical issues in the world-memory path.
