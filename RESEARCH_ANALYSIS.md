@@ -104,7 +104,7 @@ As of **January 14, 2026** (MI300X VM run; `libero_spatial`, 10 tasks).
 | Experiment | Config | Training | Eval SR | Notes |
 |------------|--------|----------|---------|-------|
 | **E0** | `smolvla` baseline | 50K steps | **89.5%** | Sanity gate passed |
-| **E1** | `smolvla_world` + `world_memory_mode_train=zero` | 50K steps | **~90%** (in progress) | Capacity control |
+| **E1** | `smolvla_world` + `world_memory_mode_train=zero` | 50K steps | **88.5%** | Capacity control, matches E0 |
 | **E2** | `smolvla_world` + `world_memory_mode_train=pred` | in progress | TBD | Main hypothesis |
 
 ### 7.2 Bugs Fixed
@@ -115,17 +115,18 @@ As of **January 14, 2026** (MI300X VM run; `libero_spatial`, 10 tasks).
 
 ### 7.3 Do-No-Harm Validation (E1 vs E0)
 
-After fixing the processor mismatch, **E1 (world_zero)** matches **E0** on SR (in-progress but already near baseline).
+After fixing the processor mismatch, **E1 (world_zero) = 88.5%** matches **E0 = 89.5%** on SR (within noise).
 
 Interpretation:
 - With `world_memory_mode_train=zero`, the injected memory is uninformative by design.
-- If the gate stays near 0, `smolvla_world` should behave like baseline SmolVLA (do‑no‑harm).
+- The gate stays near 0 (`world_gate ≈ -0.000002`), so `smolvla_world` behaves like baseline SmolVLA.
 - The observed E1≈E0 outcome validates that the plugin wiring does not break control semantics.
+- Extra parameters (Prophet, GatedCrossAttention) do not provide benefit when gate=0 (no capacity confound).
 
 ### 7.4 Interpretation
 
 - **E0 = 89.5%**: Baseline works. Sanity gate passed.
-- **E1 ≈ E0**: Expected. Proves extra parameters (Prophet, GatedCrossAttention) don't help when gate=0.
+- **E1 = 88.5% ≈ E0**: Expected. Proves extra parameters (Prophet, GatedCrossAttention) don't help when gate=0.
 - **E2 > E0?**: TBD. This is the main hypothesis test.
 
 If E2 significantly outperforms E0:

@@ -249,6 +249,15 @@ E0 baselines loaded with `--policy.path=...` load pre/post processors (normaliza
 checkpoint. `smolvla_world` now loads processors from `policy.init_from_policy_path` when set, so E0 and E1/E2 use
 the same processors. Re-run eval after pulling latest changes.
 
+### 5.2 If E2 hurts only some tasks (temporal latent mismatch)
+If you precomputed cached latents with `latent_suffix=m4` (temporal V-JEPA embeddings), but rollout uses single-frame
+embeddings for the online world encoder, Prophet sees a mismatched input distribution and predicted memory may hurt
+some tasks disproportionately.
+
+This repo supports matching rollout encoding to `latent_suffix` automatically:
+- `policy.world_rollout_temporal_window=0` (default) infers from `latent_suffix` (e.g. `m4 -> 4`)
+- Set `policy.world_rollout_temporal_window=1` to force single-frame rollout latents.
+
 ---
 
 ## 6) Parallel launch (MI300X)

@@ -351,6 +351,7 @@ class SmolVLAWorldPolicy(SmolVLAPolicy):
         self.prophet: Optional[Prophet] = None
         self.world_encoder: Optional[VisionEncoder] = None
         self._world_hist: deque[torch.Tensor] = deque(maxlen=int(config.context_frames))
+        self._frame_hist: deque[torch.Tensor] = deque()
 
         super().__init__(config)
 
@@ -401,6 +402,17 @@ class SmolVLAWorldPolicy(SmolVLAPolicy):
     def reset(self):
         super().reset()
         self._world_hist.clear()
+        self._frame_hist.clear()
+
+    def _rollout_temporal_window(self) -> int:
+        w = int(getattr(self.config, "world_rollout_temporal_window", 0) or 0)
+        if w > 0:
+            return w
+        # Infer from latent_suffix like "m4" (precompute temporal_window=4).
+        suf = str(getattr(self.config, "latent_suffix", "") or "")
+        if suf.startswith("m") and suf[1:].isdigit():
+            return max(1, int(suf[1:]))
+        return 1
 
     def _ensure_world_modules(self, detected_latent_dim: int) -> None:
         """Validate that world modules match the detected latent dimension from data.
@@ -494,7 +506,21 @@ class SmolVLAWorldPolicy(SmolVLAPolicy):
         img = images[0]
         img01 = ((img + 1.0) * 0.5).clamp(0.0, 1.0)
 
-        z_t = self.world_encoder.encode(img01)  # [B, D]
+        # Match rollout world embeddings to the cached latent distribution when using temporal latents (e.g. m4).
+        m = self._rollout_temporal_window()
+        if m > 1:
+            # Maintain a short frame buffer of the last m frames for temporal encoding.
+            if self._frame_hist.maxlen != m:
+                self._frame_hist = deque(list(self._frame_hist), maxlen=m)
+            self._frame_hist.append(img01)
+            # Repeat-pad at the beginning until we have m frames (mirrors precompute behavior).
+            while len(self._frame_hist) < m:
+                self._frame_hist.appendleft(img01)
+            frames = torch.stack(list(self._frame_hist), dim=1)  # [B, m, C, H, W]
+            z_t = self.world_encoder.encode_temporal(frames)  # [B, D]
+        else:
+            z_t = self.world_encoder.encode(img01)  # [B, D]
+
         if int(z_t.shape[-1]) != int(self._latent_dim):
             raise ValueError(
                 f"Online world encoder dim={int(z_t.shape[-1])} does not match policy.world_latent_dim={self._latent_dim}. "

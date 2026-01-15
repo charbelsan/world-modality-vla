@@ -83,3 +83,9 @@ class SmolVLAWorldConfig(SmolVLAConfig):
     # Used when cached latents are not present (e.g., during env rollouts).
     world_vision_model_name: str = "facebook/vjepa2-vitg-fpc64-256"
     world_use_first_camera_only: bool = True  # easiest default for LIBERO
+
+    # Rollout temporal encoding:
+    # Cached V-JEPA latents can be temporal (e.g., latent_suffix="m4"). If rollout uses single-frame
+    # embeddings, Prophet sees a mismatched input distribution and predicted memory can harm SR.
+    # Set to 0 to infer from `latent_suffix` ("m4" -> 4), otherwise use the provided window.
+    world_rollout_temporal_window: int = 0
