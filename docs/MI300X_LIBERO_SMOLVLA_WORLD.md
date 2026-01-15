@@ -283,6 +283,22 @@ nohup ./scripts/wait_for_pid_then_run.sh /tmp/e2_eval.pid ./scripts/run_next_job
   > /tmp/queue_after_eval.log 2>&1 &
 ```
 
+---
+
+## 9) Download artifacts from the VM (don’t lose logs if credits end)
+
+If you’re running on a rented VM, pull logs/results locally periodically.
+
+From your local machine (this repo), run:
+```bash
+chmod +x ops/pull_mi300x_artifacts.sh
+./ops/pull_mi300x_artifacts.sh root@<VM_IP> /root/world-modality-vla-git ./mi300x_artifacts --mode minimal
+```
+
+Modes:
+- `--mode minimal`: grabs `/tmp/*.log` + outputs/configs/docs, but excludes heavy weights (`*.safetensors`, `*.pt`, `*.npy`).
+- `--mode full`: grabs everything under `outputs/` (including checkpoints).
+
 ### 5.1 If `smolvla_world` SR collapses but `world_gate≈0`
 If `world_gate` stays near 0 (closed gate), `smolvla_world` should behave like the baseline.
 If you observe a collapse (e.g., E1 at ~0% SR while E0 is high), suspect numerical issues in the world-memory path.
