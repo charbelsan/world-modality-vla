@@ -145,9 +145,13 @@ class GatedCrossAttention(nn.Module):
                 p = attn.float().clamp_min(1e-8)
                 ent = float((-(p * p.log()).sum(dim=-1)).mean().cpu().item())
                 pmax = float(p.max(dim=-1).values.mean().cpu().item())
+                # Per-K attention mass: average over batch, heads, queries
+                # p shape: [B, heads, Q, K] -> mean over dims 0,1,2 -> [K]
+                per_k_attn = p.mean(dim=(0, 1, 2)).cpu().tolist()  # List of K floats
                 self._last_stats = {
                     "attn_entropy": ent,
                     "attn_pmax": pmax,
+                    "attn_per_k": per_k_attn,  # [p(k=1), p(k=2), ..., p(k=K)]
                     "gate": float(gate.detach().cpu().item()),
                     "ctx_norm": float(ctx.float().norm(dim=-1).mean().cpu().item()),
                     "act_norm": float(act_h.float().norm(dim=-1).mean().cpu().item()),
