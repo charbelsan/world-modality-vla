@@ -61,9 +61,17 @@ Test whether **world modality** (predicted future V-JEPA representations) improv
 
 ---
 
+## YOUR FOCUS: EVALUATION ONLY
+
+**Do NOT run training.** Checkpoints already exist. Your job is to run evals and collect results.
+
+The team will handle training iterations based on your eval results.
+
+---
+
 ## What Still Needs to Be Done
 
-### Priority 1: E2 Full Evaluation
+### Priority 1: E2 Full Evaluation (MOST IMPORTANT)
 Run E2 (predicted memory) on all 10 tasks with fair episode count.
 
 ```bash
@@ -72,7 +80,7 @@ MUJOCO_GL=osmesa lerobot-wm-eval \
   --policy.device=cuda \
   --env.type=libero \
   --env.task=libero_spatial \
-  --eval.n_episodes=50 \
+  --eval.n_episodes=200 \
   --eval.batch_size=10
 ```
 
@@ -100,9 +108,10 @@ lerobot-wm-eval ... --policy.world_memory_mode_rollout=random
 
 ### Episode Counts (IMPORTANT!)
 - **For fair comparison:** All evals must use the **same episode count**
-- **Recommended:** `--eval.n_episodes=50` (50 eps per task × 10 tasks = 500 total)
-- **Faster but higher variance:** `--eval.n_episodes=20` (20 eps per task)
+- **Required:** `--eval.n_episodes=200` (200 eps per task × 10 tasks = 2000 total)
+- **This gives tight confidence intervals (~±4%) for reliable conclusions**
 - **Previous issue:** E0/E1 were run @20 eps/task, E2 @200 eps/task → unfair comparison
+- **Do NOT use fewer episodes** - we need statistical power to detect differences
 
 ### Temporal Encoding (CRITICAL!)
 - Training uses **m=4** temporal V-JEPA embeddings
@@ -188,7 +197,7 @@ MUJOCO_GL=osmesa lerobot-wm-eval \
   --policy.device=cuda \
   --env.type=libero \
   --env.task=libero_spatial \
-  --eval.n_episodes=50 \
+  --eval.n_episodes=200 \
   --eval.batch_size=10
 ```
 
@@ -201,7 +210,7 @@ MUJOCO_GL=osmesa lerobot-wm-eval \
   --policy.world_memory_mode_rollout=zero \
   --env.type=libero \
   --env.task=libero_spatial \
-  --eval.n_episodes=50 \
+  --eval.n_episodes=200 \
   --eval.batch_size=10
 
 # Random memory
@@ -211,7 +220,7 @@ MUJOCO_GL=osmesa lerobot-wm-eval \
   --policy.world_memory_mode_rollout=random \
   --env.type=libero \
   --env.task=libero_spatial \
-  --eval.n_episodes=50 \
+  --eval.n_episodes=200 \
   --eval.batch_size=10
 ```
 
@@ -219,9 +228,25 @@ MUJOCO_GL=osmesa lerobot-wm-eval \
 
 ## Summary for Next Claude
 
-**Your mission:** Complete the E2 evaluation and ablations to answer:
+**Your mission:** Run EVALS ONLY (no training) to answer:
 1. **Does E2 (pred memory) beat E0 (baseline)?**
 2. **Do ablations show causality?** (pred > zero, zero > random)
 3. **Which tasks benefit/hurt from world modality?**
 
-Use `--eval.n_episodes=50` for all evals to ensure fair comparison.
+### CRITICAL REQUIREMENTS:
+- **Use `--eval.n_episodes=200` for ALL evals** (200 per task, 2000 total)
+- **EVAL ONLY** - do not run training, checkpoints already exist
+- **Run E0, E1, E2 all at 200 eps** for fair comparison
+- **Then run E2 ablations** (zero, random) at 200 eps each
+
+### Eval queue (run sequentially):
+1. E0 @200 eps → baseline
+2. E1 @200 eps → capacity control
+3. E2 @200 eps → **main hypothesis**
+4. E2-zero @200 eps → ablation
+5. E2-random @200 eps → ablation
+
+Each eval takes ~3-4 hours. Total: ~17-18 hours. Queue overnight if needed.
+
+### After all evals complete:
+Report per-task success rates for E0, E1, E2, E2-zero, E2-random in a comparison table.
