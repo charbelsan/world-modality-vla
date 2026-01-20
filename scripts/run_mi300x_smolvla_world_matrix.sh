@@ -66,11 +66,24 @@ if [[ -n "${TOTAL_SAMPLES}" ]]; then
 fi
 
 LATENTS_PATH="${CACHE_DIR}/${DATASET_REPO_ID}/train_world_latents_${WORLD_SOURCE}_${LATENT_SUFFIX}.fp16.npy"
-if [[ ! -f "${LATENTS_PATH}" ]]; then
-  echo "Missing latents cache: ${LATENTS_PATH}"
-  echo "Run precompute first (see docs/MI300X_LIBERO_SMOLVLA_WORLD.md)."
-  exit 2
-fi
+require_latents () {
+  if [[ ! -f "${LATENTS_PATH}" ]]; then
+    echo "Missing latents cache: ${LATENTS_PATH}"
+    echo "E1/E2 require cached latents. E0 baseline does not."
+    echo
+    echo "Precompute (recommended):"
+    echo "  python -m world_modality.precompute_world_latents \\"
+    echo "    --dataset_name ${DATASET_REPO_ID} \\"
+    echo "    --image_key observation.images.image \\"
+    echo "    --cache_dir ${CACHE_DIR} \\"
+    echo "    --world_latents_source ${WORLD_SOURCE} \\"
+    echo "    --temporal_window 4 \\"
+    echo "    --device cuda"
+    echo
+    echo "See docs/MI300X_LIBERO_SMOLVLA_WORLD.md for details."
+    exit 2
+  fi
+}
 
 run_train () {
   local exp_name="$1"
@@ -179,6 +192,7 @@ for seed in ${SEEDS}; do
   LEROBOT_WM_RENAME_MAP_JSON="${RENAME_MAP_E0}" run_train "E0_smolvla_baseline" "${seed}" \
     --policy.path="${INIT_POLICY_PATH}"
 
+  require_latents
   run_train "E1_world_zero" "${seed}" \
     --policy.type="smolvla_world" \
     --policy.init_from_policy_path="${INIT_POLICY_PATH}" \
@@ -193,6 +207,7 @@ for seed in ${SEEDS}; do
     --policy.world_memory_mode_train="zero" \
     --policy.enable_world_injection=true
 
+  require_latents
   run_train "E2_world_pred" "${seed}" \
     --policy.type="smolvla_world" \
     --policy.init_from_policy_path="${INIT_POLICY_PATH}" \

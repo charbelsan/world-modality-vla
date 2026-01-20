@@ -25,6 +25,40 @@ intervention.
 
 ## Quickstart: reproduce the core LIBERO matrix (E0/E1/E2)
 
+### Run on a fresh machine (what your colleague should do)
+
+1) Clone the repos (use the current branch):
+```bash
+git clone https://github.com/charbelsan/world-modality-vla.git
+cd world-modality-vla
+git checkout phaseC-flow-head
+```
+
+2) Create a Python env and install:
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -U pip
+
+# Install this repo (adds `lerobot-wm-train` / `lerobot-wm-eval` and `smolvla_world`)
+pip install -e .
+
+# Install LeRobot (either from pip or editable from source)
+pip install lerobot
+```
+
+3) Install LIBERO simulator deps:
+- System deps (Ubuntu example): `libosmesa6`, `libegl1`, `mesa-utils`, build tools
+- Python deps: `mujoco`, `libero`
+
+Then set headless rendering:
+```bash
+export MUJOCO_GL=osmesa
+```
+
+If anything is ambiguous for the environment setup, follow the runbook:
+`docs/MI300X_LIBERO_SMOLVLA_WORLD.md`.
+
 ### 0) Install + env
 
 You need:
@@ -56,7 +90,7 @@ python -m world_modality.precompute_world_latents \
   --device cuda
 ```
 
-If you already have the precomputed file, place it here (exact path matters):
+If you already have a precomputed file (e.g. from a previous VM), place it here (exact path matters):
 - `cache/HuggingFaceVLA/libero/train_world_latents_vjepa_m4.fp16.npy`
 
 Quick sanity check (should exist and be non-trivial size, ~735MB for LIBERO train):
@@ -82,6 +116,7 @@ Notes:
 - If you precompute latents with `latent_suffix=m4`, keep rollout encoding consistent:
   - default `policy.world_rollout_temporal_window=0` infers `m=4` from `latent_suffix=m4`
   - forcing `policy.world_rollout_temporal_window=1` creates an embedding distribution mismatch (can hurt SR)
+ - The launcher runs E0 first; E1/E2 require cached latents. If latents are missing, it will stop before E1.
 
 ### 3) Evaluate a trained checkpoint (direct)
 
