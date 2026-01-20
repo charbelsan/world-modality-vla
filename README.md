@@ -56,6 +56,14 @@ python -m world_modality.precompute_world_latents \
   --device cuda
 ```
 
+If you already have the precomputed file, place it here (exact path matters):
+- `cache/HuggingFaceVLA/libero/train_world_latents_vjepa_m4.fp16.npy`
+
+Quick sanity check (should exist and be non-trivial size, ~735MB for LIBERO train):
+```bash
+ls -lh cache/HuggingFaceVLA/libero/train_world_latents_vjepa_m4.fp16.npy
+```
+
 ### 2) Run the minimal experiment matrix
 
 Definitions:
@@ -74,6 +82,31 @@ Notes:
 - If you precompute latents with `latent_suffix=m4`, keep rollout encoding consistent:
   - default `policy.world_rollout_temporal_window=0` infers `m=4` from `latent_suffix=m4`
   - forcing `policy.world_rollout_temporal_window=1` creates an embedding distribution mismatch (can hurt SR)
+
+### 3) Evaluate a trained checkpoint (direct)
+
+After training, checkpoints live under:
+- `outputs/train/libero_smolvla_world_matrix/<EXP_NAME>_seed<S>/checkpoints/<STEPS>/pretrained_model`
+
+Example:
+```bash
+lerobot-wm-eval \
+  --policy.path outputs/train/libero_smolvla_world_matrix/E2_world_pred_seed0/checkpoints/50000/pretrained_model \
+  --policy.device=cuda \
+  --env.type=libero \
+  --env.task=libero_spatial \
+  --eval.n_episodes=500 \
+  --eval.batch_size=10
+```
+
+To run rollout ablations on the same checkpoint:
+```bash
+# Remove world information (do-no-harm at inference)
+lerobot-wm-eval ... --policy.type=smolvla_world --policy.world_memory_mode_rollout=zero
+
+# Corrupt memory (tests whether memory *quality* matters)
+lerobot-wm-eval ... --policy.type=smolvla_world --policy.world_memory_mode_rollout=random
+```
 
 ---
 
@@ -114,3 +147,10 @@ If your goal is **closed-loop LIBERO success rate**, start from SmolVLA + `smolv
 
 Optional:
 - CoC label generation (interpretability experiments): `coc_vla/` (see `docs/LLM_VLA_FPLUS.md`)
+
+---
+
+## Sharing results / not losing VM logs
+
+If you’re running on a rented VM, pull logs + outputs locally periodically:
+- `ops/pull_mi300x_artifacts.sh` (see `docs/MI300X_LIBERO_SMOLVLA_WORLD.md`)
