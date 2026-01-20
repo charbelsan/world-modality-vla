@@ -76,7 +76,7 @@ Run E2 (predicted memory) on all 10 tasks with fair episode count.
 
 ```bash
 MUJOCO_GL=osmesa lerobot-wm-eval \
-  --policy.path=<path_to_E2_checkpoint>/pretrained_model \
+  --policy.path=checkpoints/E2_world_pred_seed0 \
   --policy.device=cuda \
   --env.type=libero \
   --env.task=libero_spatial \
@@ -89,10 +89,18 @@ These prove whether **content** of predicted memory matters:
 
 ```bash
 # Zero memory ablation (inject zeros instead of predictions)
-lerobot-wm-eval ... --policy.world_memory_mode_rollout=zero
+MUJOCO_GL=osmesa lerobot-wm-eval \
+  --policy.path=checkpoints/E2_world_pred_seed0 \
+  --policy.world_memory_mode_rollout=zero \
+  --env.type=libero --env.task=libero_spatial \
+  --eval.n_episodes=200 --eval.batch_size=10 --policy.device=cuda
 
 # Random memory ablation (inject random vectors)
-lerobot-wm-eval ... --policy.world_memory_mode_rollout=random
+MUJOCO_GL=osmesa lerobot-wm-eval \
+  --policy.path=checkpoints/E2_world_pred_seed0 \
+  --policy.world_memory_mode_rollout=random \
+  --env.type=libero --env.task=libero_spatial \
+  --eval.n_episodes=200 --eval.batch_size=10 --policy.device=cuda
 ```
 
 **Expected results:**
@@ -125,14 +133,38 @@ lerobot-wm-eval ... --policy.world_memory_mode_rollout=random
 - **Download from HF:** `Adjimavo/libero_world_latents_vjepa_m4`
 - Only needed for **training**, not eval (eval uses online encoder)
 
-### Checkpoints
-Checkpoints should be at:
+### Checkpoints (Download from HuggingFace)
+
+All checkpoints are available on HuggingFace and can be downloaded with:
+
+```python
+from huggingface_hub import snapshot_download
+
+# E0: Baseline SmolVLA (no world modality)
+snapshot_download(
+    repo_id="Adjimavo/smolvla_world_E0_baseline",
+    local_dir="checkpoints/E0_smolvla_baseline_seed0"
+)
+
+# E1: Zero memory control (capacity test)
+snapshot_download(
+    repo_id="Adjimavo/smolvla_world_E1_zero",
+    local_dir="checkpoints/E1_world_zero_seed0"
+)
+
+# E2: Predicted memory (MAIN HYPOTHESIS)
+snapshot_download(
+    repo_id="Adjimavo/smolvla_world_E2_pred",
+    local_dir="checkpoints/E2_world_pred_seed0"
+)
 ```
-outputs/train/libero_smolvla_world_matrix/
-├── E0_smolvla_baseline_seed0/checkpoints/050000/pretrained_model/
-├── E1_world_zero_seed0/checkpoints/050000/pretrained_model/
-└── E2_world_pred_seed0/checkpoints/050000/pretrained_model/
-```
+
+Each checkpoint is ~1.4GB and contains:
+- `model.safetensors` - model weights
+- `config.json` - model configuration
+- `train_config.json` - training configuration
+- `policy_preprocessor.json` + `*.safetensors` - preprocessor
+- `policy_postprocessor.json` + `*.safetensors` - postprocessor
 
 ---
 
@@ -190,10 +222,10 @@ hf_hub_download(
 )
 ```
 
-### Run E2 eval
+### Run E0 baseline eval
 ```bash
 MUJOCO_GL=osmesa lerobot-wm-eval \
-  --policy.path=outputs/train/libero_smolvla_world_matrix/E2_world_pred_seed0/checkpoints/050000/pretrained_model \
+  --policy.path=checkpoints/E0_smolvla_baseline_seed0 \
   --policy.device=cuda \
   --env.type=libero \
   --env.task=libero_spatial \
@@ -201,11 +233,33 @@ MUJOCO_GL=osmesa lerobot-wm-eval \
   --eval.batch_size=10
 ```
 
-### Run ablations
+### Run E1 zero-memory eval
 ```bash
-# Zero memory
 MUJOCO_GL=osmesa lerobot-wm-eval \
-  --policy.path=outputs/train/libero_smolvla_world_matrix/E2_world_pred_seed0/checkpoints/050000/pretrained_model \
+  --policy.path=checkpoints/E1_world_zero_seed0 \
+  --policy.device=cuda \
+  --env.type=libero \
+  --env.task=libero_spatial \
+  --eval.n_episodes=200 \
+  --eval.batch_size=10
+```
+
+### Run E2 pred-memory eval (MAIN)
+```bash
+MUJOCO_GL=osmesa lerobot-wm-eval \
+  --policy.path=checkpoints/E2_world_pred_seed0 \
+  --policy.device=cuda \
+  --env.type=libero \
+  --env.task=libero_spatial \
+  --eval.n_episodes=200 \
+  --eval.batch_size=10
+```
+
+### Run E2 ablations (use same E2 checkpoint)
+```bash
+# Zero memory ablation - inject zeros instead of predictions
+MUJOCO_GL=osmesa lerobot-wm-eval \
+  --policy.path=checkpoints/E2_world_pred_seed0 \
   --policy.device=cuda \
   --policy.world_memory_mode_rollout=zero \
   --env.type=libero \
@@ -213,9 +267,9 @@ MUJOCO_GL=osmesa lerobot-wm-eval \
   --eval.n_episodes=200 \
   --eval.batch_size=10
 
-# Random memory
+# Random memory ablation - inject random vectors
 MUJOCO_GL=osmesa lerobot-wm-eval \
-  --policy.path=outputs/train/libero_smolvla_world_matrix/E2_world_pred_seed0/checkpoints/050000/pretrained_model \
+  --policy.path=checkpoints/E2_world_pred_seed0 \
   --policy.device=cuda \
   --policy.world_memory_mode_rollout=random \
   --env.type=libero \
