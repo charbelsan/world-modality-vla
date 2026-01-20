@@ -50,14 +50,6 @@ fi
 mkdir -p ops/_tmp_latents_readme
 README_TMP="ops/_tmp_latents_readme/README.md"
 cat > "${README_TMP}" <<'MD'
----
-license: apache-2.0
-task_categories:
-  - robotics
-  - representation-learning
-  - time-series-forecasting
----
-
 # LIBERO world latents (V-JEPA v2, temporal m=4)
 
 This dataset contains **precomputed world latents** for `HuggingFaceVLA/libero`, used by the `smolvla_world`
@@ -75,6 +67,14 @@ policy in `world-modality-vla` as “world modality” external memory.
 - Temporal encoding: `m=4` (4-frame temporal embedding)
 - Dtype: float16
 - Shape (expected): `[273465, 1408]`
+
+## Licenses / attribution
+
+These are *derived features* computed from:
+- the source dataset (`HuggingFaceVLA/libero`)
+- the world encoder weights (`facebook/vjepa2-vitg-fpc64-256`)
+
+Please follow the licenses/terms of the upstream dataset and model when using or redistributing these latents.
 
 ## Intended use
 
@@ -112,4 +112,3 @@ huggingface-cli upload "${REPO_ID}" "${LATENTS_PATH}" "train_world_latents_vjepa
 
 echo "Done."
 echo "Pull with: hf_hub_download(repo_id='${REPO_ID}', repo_type='dataset', filename='train_world_latents_vjepa_m4.fp16.npy')"
-
