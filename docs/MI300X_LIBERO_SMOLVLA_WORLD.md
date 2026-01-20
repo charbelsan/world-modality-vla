@@ -299,6 +299,22 @@ Modes:
 - `--mode minimal`: grabs `/tmp/*.log` + outputs/configs/docs, but excludes heavy weights (`*.safetensors`, `*.pt`, `*.npy`).
 - `--mode full`: grabs everything under `outputs/` (including checkpoints).
 
+---
+
+## 10) (Optional) Upload cached world latents to Hugging Face
+
+If you don’t want to recompute V‑JEPA latents on every new machine, you can upload the cache file to a HF *dataset* repo.
+
+This repo includes a helper:
+```bash
+HF_TOKEN=hf_*** ./ops/push_vjepa_latents_to_hf.sh <username>/libero_world_latents_vjepa_m4
+```
+
+It uploads:
+- `train_world_latents_vjepa_m4.fp16.npy` (~735MB)
+- `README.md` (dataset card)
+- `metadata.json`
+
 ### 5.1 If `smolvla_world` SR collapses but `world_gate≈0`
 If `world_gate` stays near 0 (closed gate), `smolvla_world` should behave like the baseline.
 If you observe a collapse (e.g., E1 at ~0% SR while E0 is high), suspect numerical issues in the world-memory path.
