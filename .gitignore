@@ -12,6 +12,8 @@ cache/
 logs*/
 wandb/
 outputs/
+mi300x_artifacts/
+mi300x_sync/
 
 # OS / editor
 .DS_Store

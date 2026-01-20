@@ -1,283 +1,116 @@
 # World Modality VLA
 
-Treating world state as a first-class token modality for Vision-Language-Action policies.
+**Goal:** validate the hypothesis **“world modality as external memory improves VLA control”**.
 
-## Key Insight
+We treat predicted future world representations as an **extra modality** (like vision/language/state), not as extra
+tokens competing in the main sequence. The core principle is **Model‑F do‑no‑harm**:
 
-Standard VLAs map observations directly to actions. We add an explicit **world modality** that represents scene state as discrete or continuous tokens. This enables:
-- **Multi-step future prediction**: Model learns what the world *will* look like
-- **Causal reasoning**: Model understands *why* actions lead to outcomes
-- **Better generalization**: World representations transfer across tasks
+- Predict futures with a separate module (“Prophet”): `z_{t-T+1:t} -> ẑ_{t+1:t+K}`
+- Inject predicted memory **only into the action path** via **gated cross‑attention**
+- Initialize the gate to **0**, so the policy starts identical to the baseline
 
-## Model Architectures
+This repo currently focuses on a **working LIBERO baseline** (SmolVLA) and adds world modality as a controlled
+intervention.
 
-| Model | Input | Auxiliary Task | Key Idea |
-|-------|-------|----------------|----------|
-| **A** | Obs, State | None | Baseline BC |
-| **B** | Obs, State | Predict future world tokens | Multi-task learning |
-| **B_cont** | Obs, State | Predict future embeddings | No VQ quantization noise |
-| **C** | Obs, State, World Token | Predict future world tokens | World as input modality |
-| **F** | Obs, State + Prophet memory | Predict future embeddings | External memory via cross-attention |
+---
 
-All models share the same transformer backbone. They differ in:
-- **What goes into the sequence** (C adds world token, F adds predicted future via cross-attention)
-- **What auxiliary task is trained** (discrete tokens vs continuous embeddings)
+## Start here (recommended path)
 
-### Model F Architecture (Best Performing)
+- Recommended branch for current experiments: `phaseC-flow-head`
+- Research status + conclusions: `RESEARCH_ANALYSIS.md`
+- MI300X runbook (setup + commands): `docs/MI300X_LIBERO_SMOLVLA_WORLD.md`
+- Fusion ablations (F1–F3: late vs early world fusion): `docs/SMOLVLA_WORLD_FUSION_ABLATIONS.md`
 
-```
-Prophet Module:
-  History [B, T_ctx, D] → Future Predictions [B, K_fut, D]
+---
 
-Policy Transformer:
-  Obs + State → Action Queries → GatedCrossAttention(Query, Prophet Output) → Actions
-```
+## Quickstart: reproduce the core LIBERO matrix (E0/E1/E2)
 
-The gate is initialized to 0 ("do-no-harm"), allowing the model to gradually learn to use future predictions.
+### 0) Install + env
 
-## Vision Encoder
-
-We use a **frozen vision encoder** to create frame embeddings:
-- **DINOv2** (default): Widely available, strong semantic features
-- **V-JEPA-v2** (upgrade): Better dynamics priors from video pretraining
-
-The encoder is pluggable via `--vision_model_name`. Both produce embeddings that get quantized into discrete world tokens or used directly as continuous targets.
-
-## Datasets
-
-| Dataset | Description | Link |
-|---------|-------------|------|
-| **LIBERO** | Language-conditioned manipulation | [HuggingFaceVLA/libero](https://huggingface.co/datasets/HuggingFaceVLA/libero) |
-| **MetaWorld MT50** | Multi-task manipulation benchmark | [HuggingFaceVLA/metaworld_mt50](https://huggingface.co/datasets/HuggingFaceVLA/metaworld_mt50) |
-
-## Chain-of-Causality (CoC)
-
-CoC provides textual explanations of robot behavior:
-- **What**: "Robot moves gripper toward red block, then closes gripper to grasp"
-- **Why**: Generated offline using VLMs (Qwen3-VL) on episode keyframes
-- **Purpose**: Interpretability, debugging, and potential cross-embodiment transfer
-
-## Quick Start
+You need:
+- LeRobot installed (editable recommended)
+- This repo installed (registers `smolvla_world` policy + wrapper CLIs)
+- LIBERO simulator deps (`mujoco`, `libero`, render backend)
 
 ```bash
-# 1. Install
-pip install -e ".[lerobot]"
+# In your Python venv
+pip install -e .
+pip install -e /path/to/lerobot
 
-# 2. Precompute embeddings and world tokens
-python -m world_modality.precompute_world_tokens \
-  --dataset_name HuggingFaceVLA/libero \
-  --image_key observation.images.image \
-  --cache_dir cache
-
-# 3. Train any model
-python -m world_modality.train --model_type A --max_epochs 5
+# Headless rollouts (most reliable default)
+export MUJOCO_GL=osmesa
 ```
 
-## Qwen VLM + World Modality (Model F+)
+### 1) Precompute world latents (offline training only)
 
-This is the "generalist VLM + action head + Model-F world memory" pipeline.
-Model F+ adds CoC text loss (optional) and a FLARE-style future latent alignment loss.
-See `docs/LLM_VLA_FPLUS.md` for the full experiment matrix and launch script.
-See `docs/L40S_RUNBOOK.md` for a zero-ambiguity L40S setup.
-
-Quick run on L40S:
-```bash
-export COC_JSONL=/path/to/coc_labels.jsonl
-scripts/run_fplus_experiments.sh
-```
-
-Precompute continuous world latents (DINO or V-JEPA):
+Training uses cached V‑JEPA latents indexed by dataset `index`.
+Rollouts do **not** require this cache, but do require an online world encoder with matching settings.
 
 ```bash
 python -m world_modality.precompute_world_latents \
   --dataset_name HuggingFaceVLA/libero \
   --image_key observation.images.image \
-  --world_latents_source dino \
-  --cache_dir cache
+  --cache_dir cache \
+  --world_latents_source vjepa \
+  --temporal_window 4 \
+  --device cuda
 ```
 
-E0 (VLM-BC baseline):
+### 2) Run the minimal experiment matrix
+
+Definitions:
+- **E0**: baseline SmolVLA fine‑tune
+- **E1**: `smolvla_world` with **zero memory** (capacity control; should match E0)
+- **E2**: `smolvla_world` with **predicted memory** (main hypothesis)
 
 ```bash
-python -m world_modality.train_llm_vla \
-  --vlm_backbone qwen3_vl_3b_instruct \
-  --trust_remote_code \
-  --dataset_name HuggingFaceVLA/libero \
-  --image_key observation.images.image \
-  --instruction_key task \
-  --world_latents_source dino \
-  --future_memory_source predicted \
-  --disable_future_injection \
-  --lambda_world 0.0
-```
-
-E2 (Model-F world memory injection):
-
-```bash
-python -m world_modality.train_llm_vla \
-  --vlm_backbone qwen3_vl_3b_instruct \
-  --trust_remote_code \
-  --dataset_name HuggingFaceVLA/libero \
-  --image_key observation.images.image \
-  --instruction_key task \
-  --world_latents_source dino \
-  --future_memory_source scheduled \
-  --lambda_world 0.2
+STEPS=50000 SEEDS="0" DO_EVAL=1 \
+EVAL_TASK=libero_spatial EVAL_EPISODES=500 EVAL_BATCH_SIZE=10 EVAL_N_ACTION_STEPS=10 \
+./scripts/run_mi300x_smolvla_world_matrix.sh
 ```
 
 Notes:
-- Use `--freeze_backbone --use_lora` for LoRA tuning.
-- Switch to `--world_latents_source vjepa` once V-JEPA latents are available.
-- Action decoding uses `<ACT_i>` tokens and reads hidden states (no text decoding).
+- For apples‑to‑apples comparisons, keep **episode count identical** across E0/E1/E2 (don’t mix 20 and 200).
+- If you precompute latents with `latent_suffix=m4`, keep rollout encoding consistent:
+  - default `policy.world_rollout_temporal_window=0` infers `m=4` from `latent_suffix=m4`
+  - forcing `policy.world_rollout_temporal_window=1` creates an embedding distribution mismatch (can hurt SR)
 
-## SmolVLA + World Modality (LeRobot plugin)
+---
 
-This repo also ships a LeRobot policy plugin (`lerobot_policy_world_modality`) that registers:
-- `--policy.type=smolvla_world`
+## How we interpret “world helps”
 
-Runbook (MI300X-friendly): `docs/MI300X_LIBERO_SMOLVLA_WORLD.md`
+We only claim the hypothesis is supported if:
 
-### Phase 2: Talk while acting (CoC loss)
+1) **E1 ≈ E0** (do‑no‑harm; capacity control passes), and
+2) **E2 > E0** with the same eval protocol, and
+3) Rollout ablations show **memory content matters**:
+   - `world_memory_mode_rollout=pred` > `zero`
+   - `random` < `pred`
 
-This keeps control independent: actions are computed from <ACT> hidden states, and language
-loss is computed in a separate forward pass.
+Rollout modes:
+- `pred`: Prophet memory (hypothesis mode)
+- `zero`: zero memory (do‑no‑harm at inference)
+- `random`: noise memory (tests quality vs “extra input”)
 
-```bash
-python -m world_modality.train_llm_vla \
-  --vlm_backbone qwen3_vl_3b_instruct \
-  --trust_remote_code \
-  --dataset_name HuggingFaceVLA/libero \
-  --image_key observation.images.image \
-  --instruction_key task \
-  --world_latents_source dino \
-  --future_memory_source scheduled \
-  --lambda_world 0.2 \
-  --lambda_text 0.1 \
-  --coc_jsonl /path/to/coc_labels.jsonl
-```
+---
 
-## Full Experiment Commands
+## What’s inside this repo (relevant folders)
 
-### Phase 0: Sanity Check (K=1)
+- `lerobot_policy_world_modality/`: LeRobot policy plugin (`--policy.type=smolvla_world`)
+- `world_modality/`: world encoder + Prophet + latent precompute utilities
+- `scripts/`: launchers (matrix + parallel) and analysis helpers
+- `docs/`: runbooks + experiment matrix + fusion ablations
 
-Quick verification that training works:
+---
 
-```bash
-python -m world_modality.train --model_type A --future_offset 1 --max_epochs 3
-python -m world_modality.train --model_type B --future_offset 1 --max_epochs 3
-```
+## Legacy / exploratory pipelines
 
-### Phase 1: Scientific Comparison (K=4)
+This repo also contains earlier/experimental pipelines (kept for research continuity, not the recommended baseline):
 
-Compare all model variants:
+- Qwen‑based VLM + `<ACT_i>` action readout (“F+”): `docs/LLM_VLA_FPLUS.md`, `docs/L40S_RUNBOOK.md`
+- Earlier model variants (A/B/C/F) in `world_modality/` used for offline studies and ablations
 
-```bash
-for model in A B B_cont C F; do
-  python -m world_modality.train \
-    --model_type $model \
-    --future_offset 4 \
-    --max_epochs 5 \
-    --log_dir logs/${model}_k4
-done
-```
+If your goal is **closed-loop LIBERO success rate**, start from SmolVLA + `smolvla_world` as above.
 
-### Phase 2: Model F Ablations
-
-Test whether Model F actually uses future predictions:
-
-```bash
-# Train Model F
-python -m world_modality.train \
-  --model_type F \
-  --future_offset 4 \
-  --max_epochs 5 \
-  --log_dir logs/F_k4
-
-# Corruption intervention tests
-for mode in shuffle random zero oracle; do
-  python -m world_modality.intervention_corrupt_future \
-    --checkpoint logs/F_k4/model_F_best.pt \
-    --corruption_mode $mode
-done
-```
-
-**Interpretation:**
-- `shuffle/random/zero`: ratio > 1.0 means model relies on future memory
-- `oracle`: ratio < 1.0 means better predictions would improve actions
-
-### Phase 3: Horizon Scaling (K=8)
-
-Test with longer prediction horizon:
-
-```bash
-for model in A B_cont F; do
-  python -m world_modality.train \
-    --model_type $model \
-    --future_offset 8 \
-    --max_epochs 5 \
-    --log_dir logs/${model}_k8
-done
-```
-
-### CoC Generation
-
-Generate Chain-of-Causality labels:
-
-```bash
-python -m coc_vla.coc_generation \
-  --dataset_name HuggingFaceVLA/libero \
-  --backend qwen3-vl \
-  --model_name Qwen/Qwen3-VL-8B-Instruct \
-  --output_jsonl coc_outputs/libero_coc.jsonl \
-  --max_episodes 100
-```
-
-## Project Structure
-
-```
-world_modality/
-  model.py                 # WorldPolicyTransformer, Prophet, GatedCrossAttention
-  train.py                 # Unified training script
-  train_utils.py           # Loss functions, schedulers
-  data_sr100.py            # Data loading with caching
-  precompute_world_tokens.py  # VQ tokenization
-  intervention_corrupt_future.py  # Model F ablation tests
-
-coc_vla/
-  coc_generation.py        # Generate CoC with VLMs
-  model.py                 # Two-head model (actions + CoC)
-  train.py                 # Training with CoC loss
-
-scripts/
-  test_all_models.py       # Verify all model types work
-```
-
-## Verify Installation
-
-```bash
-# Test all models on CPU
-python scripts/test_all_models.py --device cpu
-
-# Test on GPU
-python scripts/test_all_models.py --device cuda
-```
-
-## Environment Options
-
-**uv (fastest):**
-```bash
-uv pip install -e ".[lerobot]"
-```
-
-**conda:**
-```bash
-conda env create -f environment.yml
-conda activate world-modality
-```
-
-**Docker:**
-```bash
-docker build -t world-modality .
-docker run --gpus all -v $(pwd):/workspace world-modality \
-  python -m world_modality.train --model_type F
-```
+Optional:
+- CoC label generation (interpretability experiments): `coc_vla/` (see `docs/LLM_VLA_FPLUS.md`)
