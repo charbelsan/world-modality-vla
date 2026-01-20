@@ -5,10 +5,11 @@ set -euo pipefail
 #
 # Requires:
 # - `hf` CLI (from `huggingface_hub`) installed
-# - authentication already set up via `hf auth login` OR a write-capable token in env `HF_TOKEN`
+# - authentication already set up via `hf auth login`
 #
 # Example:
-#   HF_TOKEN=hf_*** ./ops/push_vjepa_latents_to_hf.sh charbelsan/libero_world_latents_vjepa_m4
+#   hf auth login
+#   ./ops/push_vjepa_latents_to_hf.sh charbelsan/libero_world_latents_vjepa_m4
 #
 # Optional:
 #   PRIVATE=1 HF_TOKEN=hf_*** ./ops/push_vjepa_latents_to_hf.sh charbelsan/libero_world_latents_vjepa_m4
@@ -39,15 +40,10 @@ fi
 echo "Repo: ${REPO_ID} (dataset) ${PRIVATE_FLAG}"
 echo "Latents: ${LATENTS_PATH}"
 
-if [[ -n "${HF_TOKEN:-}" ]]; then
-  hf auth login --token "${HF_TOKEN}" >/dev/null
-else
-  if ! hf auth whoami >/dev/null 2>&1; then
-    echo "Not logged in. Run this first (interactive, token won't be echoed):"
-    echo "  hf auth login"
-    echo "Or set HF_TOKEN=hf_*** when running this script."
-    exit 2
-  fi
+if ! hf auth whoami >/dev/null 2>&1; then
+  echo "Not logged in. Run this first (interactive, token won't be echoed):"
+  echo "  hf auth login"
+  exit 2
 fi
 
 mkdir -p ops/_tmp_latents_readme
