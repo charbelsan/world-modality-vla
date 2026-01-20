@@ -90,6 +90,21 @@ python -m world_modality.precompute_world_latents \
   --device cuda
 ```
 
+**Or download precomputed latents from HuggingFace (faster):**
+```python
+from huggingface_hub import hf_hub_download
+import os
+
+# Download to correct cache location
+os.makedirs("cache/HuggingFaceVLA/libero", exist_ok=True)
+hf_hub_download(
+    repo_id="Adjimavo/libero_world_latents_vjepa_m4",
+    repo_type="dataset",
+    filename="train_world_latents_vjepa_m4.fp16.npy",
+    local_dir="cache/HuggingFaceVLA/libero"
+)
+```
+
 If you already have a precomputed file (e.g. from a previous VM), place it here (exact path matters):
 - `cache/HuggingFaceVLA/libero/train_world_latents_vjepa_m4.fp16.npy`
 
