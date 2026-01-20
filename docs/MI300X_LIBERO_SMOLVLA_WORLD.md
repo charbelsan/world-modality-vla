@@ -307,7 +307,8 @@ If you don’t want to recompute V‑JEPA latents on every new machine, you can 
 
 This repo includes a helper:
 ```bash
-HF_TOKEN=hf_*** ./ops/push_vjepa_latents_to_hf.sh <username>/libero_world_latents_vjepa_m4
+hf auth login
+./ops/push_vjepa_latents_to_hf.sh <username>/libero_world_latents_vjepa_m4
 ```
 
 It uploads:
