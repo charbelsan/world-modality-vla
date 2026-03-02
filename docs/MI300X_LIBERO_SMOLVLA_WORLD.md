@@ -76,6 +76,22 @@ python -m world_modality.precompute_world_latents \
 This produces (example):
 `cache/HuggingFaceVLA/libero/train_world_latents_vjepa_m4.fp16.npy`
 
+### 1.2 Wrist-camera latents (optional, recommended for pickup/contact tasks)
+
+LIBERO provides a wrist camera at `observation.images.image2`. To avoid cache collisions, use a different suffix:
+```bash
+python -m world_modality.precompute_world_latents \
+  --dataset_name HuggingFaceVLA/libero \
+  --image_key observation.images.image2 \
+  --cache_dir cache \
+  --world_latents_source vjepa \
+  --temporal_window 4 \
+  --latent_suffix m4_wrist \
+  --device cuda
+```
+
+Then train with `--policy.latent_suffix=m4_wrist` and evaluate with `--policy.world_camera=wrist`.
+
 ### 1.1 Smoke test (recommended)
 Before launching long runs, verify the plugin policy + cached-latent plumbing works:
 ```bash

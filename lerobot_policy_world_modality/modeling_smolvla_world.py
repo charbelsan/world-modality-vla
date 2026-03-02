@@ -352,6 +352,8 @@ class SmolVLAWorldPolicy(SmolVLAPolicy):
         self.world_encoder: Optional[VisionEncoder] = None
         self._world_hist: deque[torch.Tensor] = deque(maxlen=int(config.context_frames))
         self._frame_hist: deque[torch.Tensor] = deque()
+        self._signflip_mask: Optional[torch.Tensor] = None
+        self._warned_world_camera: bool = False
 
         super().__init__(config)
 
@@ -502,8 +504,25 @@ class SmolVLAWorldPolicy(SmolVLAPolicy):
         if len(images) == 0:
             return None
 
+        # Pick which camera to use for online world encoding.
+        cam = str(getattr(self.config, "world_camera", "") or "front").strip().lower()
+        if cam in ("", "front", "image", "cam0", "0"):
+            cam_idx = 0
+        elif cam in ("wrist", "image2", "cam1", "1"):
+            cam_idx = 1
+        else:
+            raise ValueError(f"Unknown policy.world_camera={self.config.world_camera!r} (expected 'front' or 'wrist').")
+        if cam_idx >= len(images):
+            if not self._warned_world_camera:
+                self._warned_world_camera = True
+                print(
+                    f"[smolvla_world] Warning: world_camera={cam!r} requested but only {len(images)} camera(s) present; "
+                    "falling back to first camera."
+                )
+            cam_idx = 0
+
         # Images are in [-1, 1] (SigLIP expects that); convert back to [0, 1] for world encoder.
-        img = images[0]
+        img = images[cam_idx]
         img01 = ((img + 1.0) * 0.5).clamp(0.0, 1.0)
 
         # Match rollout world embeddings to the cached latent distribution when using temporal latents (e.g. m4).
@@ -547,11 +566,54 @@ class SmolVLAWorldPolicy(SmolVLAPolicy):
 
         # Prophet is in float32; cast z_hist if needed (world encoder may output float16).
         z_hist_f = z_hist.float()
-        z_pred = self.prophet(z_hist_f)
+        z_pred = self.prophet(z_hist_f)  # [B, K, D] (delta if delta_prediction)
         if self.config.delta_prediction:
             z_current = z_hist[:, -1:, :]
-            return z_current + z_pred
-        return z_pred
+            z_pred_abs = z_current + z_pred
+        else:
+            z_pred_abs = z_pred
+
+        if mode == "pred":
+            return z_pred_abs.to(dtype=z_hist.dtype)
+
+        if mode == "random_scaled":
+            # Rescale Gaussian noise to match the RMS magnitude of the predicted memory, to remove norm confounds.
+            pred = z_pred_abs.to(dtype=torch.float32)
+            rnd = torch.randn_like(pred)
+            pred_rms = pred.pow(2).mean(dim=(1, 2), keepdim=True).sqrt().clamp_min(1e-8)
+            rnd_rms = rnd.pow(2).mean(dim=(1, 2), keepdim=True).sqrt().clamp_min(1e-8)
+            out = rnd * (pred_rms / rnd_rms)
+            return out.to(dtype=z_hist.dtype)
+
+        if mode == "shuffle":
+            # Break alignment while preserving the predicted-memory distribution.
+            pred = z_pred_abs.to(dtype=z_hist.dtype)
+            bsz = int(pred.shape[0])
+            if bsz > 1:
+                perm = torch.randperm(bsz, device=pred.device)
+                return pred[perm]
+            # If batch_size==1, shuffle future steps instead.
+            k = int(pred.shape[1])
+            if k > 1:
+                permk = torch.randperm(k, device=pred.device)
+                return pred[:, permk, :]
+            return pred
+
+        if mode == "signflip":
+            # Preserve norms exactly but destroy semantics by flipping a fixed random sign per latent dim.
+            pred = z_pred_abs.to(dtype=z_hist.dtype)
+            if self._signflip_mask is None or int(self._signflip_mask.shape[0]) != int(pred.shape[-1]):
+                g = torch.Generator(device=pred.device)
+                g.manual_seed(0)
+                mask = torch.randint(0, 2, (int(pred.shape[-1]),), generator=g, device=pred.device, dtype=torch.int8)
+                mask = mask.to(dtype=pred.dtype) * 2.0 - 1.0  # {0,1} -> {-1,+1}
+                self._signflip_mask = mask
+            return pred * self._signflip_mask.view(1, 1, -1)
+
+        raise ValueError(
+            f"Unknown policy.world_memory_mode_rollout={mode!r}. "
+            "Expected one of: pred|zero|random|random_scaled|shuffle|signflip."
+        )
 
     def forward(self, batch: dict[str, Tensor], noise=None, time=None):
         # Report previous-step grad norms (hooks fill them during backward).

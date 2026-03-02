@@ -9,7 +9,13 @@ from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 # Type aliases for documentation (draccus can't parse Literal from CLI, so we use str)
 # Valid values: WorldLatentsSource: "dino" | "vjepa"
 # Valid values: WorldMemoryMode: "pred" | "oracle" | "zero" | "shuffle" | "random"
-# Valid values: WorldMemoryModeRollout: "pred" | "zero" | "random"
+# Valid values: WorldMemoryModeRollout:
+#   - "pred": Prophet-predicted future (main hypothesis)
+#   - "zero": zero memory (do-no-harm at inference)
+#   - "random": Gaussian noise memory (distribution/confoundy; use with care)
+#   - "random_scaled": Gaussian noise rescaled to match pred RMS
+#   - "shuffle": pred memory shuffled to break alignment (preserves distribution)
+#   - "signflip": pred memory with fixed random sign flip per-dim (preserves norms)
 
 
 @PreTrainedConfig.register_subclass("smolvla_world")
@@ -50,7 +56,7 @@ class SmolVLAWorldConfig(SmolVLAConfig):
     world_memory_mode_train: str = "pred"  # "pred" | "oracle" | "zero" | "shuffle" | "random"
     log_attn_stats: bool = True
     log_grad_stats: bool = True
-    world_memory_mode_rollout: str = "pred"  # "pred" | "zero" | "random"
+    world_memory_mode_rollout: str = "pred"  # "pred" | "zero" | "random" | "random_scaled" | "shuffle" | "signflip"
 
     # ---- Optional fusion ablations (F2/F3) ----
     # F2: inject world memory into the *suffix input embeddings* (earlier in the expert path).
@@ -82,7 +88,10 @@ class SmolVLAWorldConfig(SmolVLAConfig):
     # ---- Online world encoder (rollouts) ----
     # Used when cached latents are not present (e.g., during env rollouts).
     world_vision_model_name: str = "facebook/vjepa2-vitg-fpc64-256"
-    world_use_first_camera_only: bool = True  # easiest default for LIBERO
+    world_use_first_camera_only: bool = True  # legacy; use `world_camera` instead
+    # Which camera to use for online world encoding during rollouts.
+    # For LIBERO: "front" -> observation.images.image, "wrist" -> observation.images.image2
+    world_camera: str = "front"  # "front" | "wrist"
 
     # Rollout temporal encoding:
     # Cached V-JEPA latents can be temporal (e.g., latent_suffix="m4"). If rollout uses single-frame

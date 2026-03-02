@@ -123,6 +123,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--temporal_window", type=int, default=1,
                         help="Number of frames per clip for temporal encoding (1=single-frame, 4=recommended)")
     parser.add_argument(
+        "--latent_suffix",
+        type=str,
+        default="",
+        help=(
+            "Optional cache suffix for the latents filename (e.g. 'm4' or 'm4_wrist'). "
+            "If omitted and temporal_window>1, defaults to 'm{temporal_window}'."
+        ),
+    )
+    parser.add_argument(
         "--resume",
         action=argparse.BooleanOptionalAction,
         default=True,
@@ -160,6 +169,11 @@ def main():
         image_key=args.image_key,
         cache_dir=args.cache_dir,
     )
+    # Use latent_suffix to avoid cache collisions (e.g., front vs wrist camera, or different temporal windows).
+    if str(args.latent_suffix).strip():
+        data_cfg.latent_suffix = str(args.latent_suffix).strip()
+    elif temporal_window > 1:
+        data_cfg.latent_suffix = f"m{temporal_window}"
 
     # Underlying LeRobot dataset: iterate over all timesteps.
     from lerobot.datasets.lerobot_dataset import LeRobotDataset  # type: ignore
@@ -167,16 +181,8 @@ def main():
     ds = LeRobotDataset(data_cfg.dataset_name)
     cache_paths = build_latent_cache_paths(data_cfg, args.split, args.world_latents_source)
 
-    # Modify cache path for temporal encoding
     if temporal_window > 1:
-        base_path = cache_paths.latents_path
-        # Insert _m{window} before .fp16.npy
-        if ".fp16.npy" in base_path:
-            new_path = base_path.replace(".fp16.npy", f"_m{temporal_window}.fp16.npy")
-        else:
-            new_path = base_path.replace(".npy", f"_m{temporal_window}.npy")
-        cache_paths = replace(cache_paths, latents_path=new_path)
-        print(f"[Temporal] Using m={temporal_window} frames per embedding")
+        print(f"[Temporal] Using m={temporal_window} frames per embedding (latent_suffix={data_cfg.latent_suffix})")
 
     # Choose dataset based on temporal_window
     if temporal_window > 1:
@@ -326,6 +332,8 @@ def main():
 
     # Save metadata JSON for reproducibility (always).
     metadata = {
+        "image_key": args.image_key,
+        "latent_suffix": getattr(data_cfg, "latent_suffix", ""),
         "temporal_window": temporal_window,
         "model": model_name if args.world_latents_source == "vjepa" else args.vision_model_name,
         "pooling": "mean_spatial_then_temporal" if temporal_window > 1 else "mean_spatial",

@@ -22,6 +22,7 @@ WORLD_LATENT_DIM=${WORLD_LATENT_DIM:-1408}
 CONTEXT_FRAMES=${CONTEXT_FRAMES:-4}
 FUTURE_OFFSET=${FUTURE_OFFSET:-8}
 LAMBDA_WORLD=${LAMBDA_WORLD:-0.2}
+WORLD_CAMERA=${WORLD_CAMERA:-"front"}    # front|wrist (rollout world encoder camera)
 
 STEPS=${STEPS:-200000}
 BATCH_SIZE=${BATCH_SIZE:-64}
@@ -205,6 +206,7 @@ for seed in ${SEEDS}; do
     --policy.future_offset="${FUTURE_OFFSET}" \
     --policy.lambda_world="${LAMBDA_WORLD}" \
     --policy.world_memory_mode_train="zero" \
+    --policy.world_camera="${WORLD_CAMERA}" \
     --policy.enable_world_injection=true
 
   require_latents
@@ -220,6 +222,7 @@ for seed in ${SEEDS}; do
     --policy.future_offset="${FUTURE_OFFSET}" \
     --policy.lambda_world="${LAMBDA_WORLD}" \
     --policy.world_memory_mode_train="pred" \
+    --policy.world_camera="${WORLD_CAMERA}" \
     --policy.enable_world_injection=true
 
   # Optional: evaluate each run after training completes.
