@@ -148,13 +148,16 @@ class GatedCrossAttention(nn.Module):
                 # Per-K attention mass: average over batch, heads, queries
                 # p shape: [B, heads, Q, K] -> mean over dims 0,1,2 -> [K]
                 per_k_attn = p.mean(dim=(0, 1, 2)).cpu().tolist()  # List of K floats
+                ctx_norm = ctx.float().norm(dim=-1).mean()
+                act_norm = act_h.float().norm(dim=-1).mean().clamp_min(1e-8)
                 self._last_stats = {
                     "attn_entropy": ent,
                     "attn_pmax": pmax,
                     "attn_per_k": per_k_attn,  # [p(k=1), p(k=2), ..., p(k=K)]
                     "gate": float(gate.detach().cpu().item()),
-                    "ctx_norm": float(ctx.float().norm(dim=-1).mean().cpu().item()),
-                    "act_norm": float(act_h.float().norm(dim=-1).mean().cpu().item()),
+                    "ctx_norm": float(ctx_norm.cpu().item()),
+                    "act_norm": float(act_norm.cpu().item()),
+                    "perturbation_ratio": float((abs(gate) * ctx_norm / act_norm).cpu().item()),
                 }
         return out
 

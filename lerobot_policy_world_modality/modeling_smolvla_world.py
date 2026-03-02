@@ -586,17 +586,14 @@ class SmolVLAWorldPolicy(SmolVLAPolicy):
             return out.to(dtype=z_hist.dtype)
 
         if mode == "shuffle":
-            # Break alignment while preserving the predicted-memory distribution.
+            # Break alignment across episodes while preserving the predicted-memory distribution.
+            # Batch-only shuffle; if B==1 (e.g. last env in a batch), return pred unchanged
+            # to avoid mixing in a different corruption. Use signflip for B-independent tests.
             pred = z_pred_abs.to(dtype=z_hist.dtype)
             bsz = int(pred.shape[0])
             if bsz > 1:
                 perm = torch.randperm(bsz, device=pred.device)
                 return pred[perm]
-            # If batch_size==1, shuffle future steps instead.
-            k = int(pred.shape[1])
-            if k > 1:
-                permk = torch.randperm(k, device=pred.device)
-                return pred[:, permk, :]
             return pred
 
         if mode == "signflip":
