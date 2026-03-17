@@ -20,6 +20,7 @@ intervention.
 - Research status + conclusions: `RESEARCH_ANALYSIS.md`
 - MI300X runbook (setup + commands): `docs/MI300X_LIBERO_SMOLVLA_WORLD.md`
 - H100 short-window experiment plan: `docs/H100_24H_WORLD_MODALITY_PLAN.md`
+- P5 Docker runbook: `docs/P5_DOCKER_RUNBOOK.md`
 - Fusion ablations (F1–F3: late vs early world fusion): `docs/SMOLVLA_WORLD_FUSION_ABLATIONS.md`
 
 ---

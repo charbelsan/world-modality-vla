@@ -1,0 +1,23 @@
+.git
+.gitignore
+.claude
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+
+# Large local artifacts and caches
+cache
+outputs
+eval_libero_results
+logs
+logs_llm
+mi300x_artifacts
+mi300x_sync
+
+# Local-only scratch
+ops/_tmp_latents_readme
+
+# OS / editor noise
+.DS_Store
