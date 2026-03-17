@@ -321,7 +321,10 @@ class SmolVLAWorldPolicy(SmolVLAPolicy):
     config_class = SmolVLAWorldConfig
     name = "smolvla_world"
 
-    def __init__(self, config: SmolVLAWorldConfig):
+    def __init__(self, config: SmolVLAWorldConfig, **kwargs):
+        # Newer LeRobot factory versions may pass plugin-irrelevant kwargs (e.g. dataset_stats)
+        # directly to the policy constructor. Keep the plugin forward-compatible by ignoring them.
+        kwargs.pop("dataset_stats", None)
         # If we're asked to init from a pretrained SmolVLA policy, first align this config's
         # *architecture* fields to the init checkpoint's config so weight loading is shape-consistent
         # (e.g., smolvla_base vs smolvla_libero differ in depth/width).
