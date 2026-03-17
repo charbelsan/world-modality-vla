@@ -55,6 +55,53 @@ def _extract_rename_map_from_argv() -> None:
     sys.argv = out
 
 
+def _normalize_eval_policy_path_arg() -> None:
+    """Normalize checkpoint path args for `lerobot-eval` compatibility.
+
+    Different LeRobot versions disagree on whether eval should be given a checkpoint path via
+    `--policy.path=...` or `--policy.pretrained_path=...`. The parser path-loading logic is
+    consistently implemented around `policy.path`, so we translate any `pretrained_path`
+    spelling into `path`, and also normalize space-separated forms into `--policy.path=...`.
+    """
+
+    argv = list(sys.argv)
+    out: list[str] = [argv[0]]
+    policy_path_value: str | None = None
+
+    i = 1
+    while i < len(argv):
+        a = argv[i]
+
+        if a.startswith("--policy.path="):
+            policy_path_value = a.split("=", 1)[1]
+            i += 1
+            continue
+        if a == "--policy.path":
+            if i + 1 >= len(argv):
+                raise ValueError("--policy.path flag requires a value")
+            policy_path_value = argv[i + 1]
+            i += 2
+            continue
+
+        if a.startswith("--policy.pretrained_path="):
+            policy_path_value = a.split("=", 1)[1]
+            i += 1
+            continue
+        if a == "--policy.pretrained_path":
+            if i + 1 >= len(argv):
+                raise ValueError("--policy.pretrained_path flag requires a value")
+            policy_path_value = argv[i + 1]
+            i += 2
+            continue
+
+        out.append(a)
+        i += 1
+
+    if policy_path_value is not None:
+        out.append(f"--policy.path={policy_path_value}")
+    sys.argv = out
+
+
 def _ensure_libero_config_noninteractive() -> None:
     """Prevent LIBERO from prompting for config on first import.
 
@@ -130,6 +177,7 @@ def eval_main() -> None:
 
     import lerobot_policy_world_modality  # noqa: F401
     _extract_rename_map_from_argv()
+    _normalize_eval_policy_path_arg()
     _ensure_libero_config_noninteractive()
 
     try:
