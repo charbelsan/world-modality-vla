@@ -13,6 +13,7 @@ logs*/
 wandb/
 outputs/
 mi300x_artifacts/
+p5_artifacts/
 mi300x_sync/
 
 # OS / editor

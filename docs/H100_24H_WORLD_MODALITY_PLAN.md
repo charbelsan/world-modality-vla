@@ -2,6 +2,11 @@
 
 Goal: use **2x H100 for 24 hours** to answer the highest-value remaining research questions, not to maximize raw run count.
 
+See also:
+
+- [NEXT_EXPERIMENT_MATRIX.md](/home/charbel/charbel/world-modality-vla/docs/NEXT_EXPERIMENT_MATRIX.md)
+- [launch_h100_followup_queue.sh](/home/charbel/charbel/world-modality-vla/scripts/launch_h100_followup_queue.sh)
+
 Primary questions:
 
 1. Does **semantic** future content matter?

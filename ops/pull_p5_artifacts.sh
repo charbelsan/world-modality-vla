@@ -116,8 +116,6 @@ rsync_args=(
   -e "${SSH_CMD[*]}"
   "${REMOTE}:${REMOTE_REPO%/}/" "${dest}/repo/"
   --include='*/'
-  --include='outputs/**'
-  --include='eval_libero_results/**'
   --include='RESEARCH_ANALYSIS.md'
   --include='README.md'
   --include='docs/**'
@@ -132,14 +130,18 @@ rsync_args=(
 
 if [[ "${MODE}" == "minimal" ]]; then
   rsync "${rsync_args[@]}" \
-    --exclude='**/*.safetensors' \
-    --exclude='**/*.bin' \
-    --exclude='**/*.pt' \
-    --exclude='**/*.ckpt' \
-    --exclude='**/*.pth' \
-    --exclude='**/*.npy'
+    --include='outputs/**/*.json' \
+    --include='outputs/**/*.log' \
+    --include='outputs/**/*.txt' \
+    --include='outputs/**/*.md' \
+    --include='eval_libero_results/**' \
+    --exclude='.git/**' \
+    --exclude='.hf_cache/**' \
+    --exclude='cache/**'
 else
   rsync "${rsync_args[@]}" \
+    --include='outputs/**' \
+    --include='eval_libero_results/**' \
     --include='cache/HuggingFaceVLA/libero/*.npy'
 fi
 
