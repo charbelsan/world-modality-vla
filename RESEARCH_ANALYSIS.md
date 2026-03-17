@@ -1,7 +1,7 @@
 # World Modality Research Analysis
 
-**Last updated:** January 14, 2026
-**Status:** SmolVLA baseline validated (~89.5% SR on `libero_spatial`). E1 (capacity control) matches baseline after processor fix. E2 (world_pred) training/eval in progress.
+**Last updated:** March 17, 2026
+**Status:** SmolVLA baseline is validated. `smolvla_world` passes the do-no-harm check (`E1 ~= E0`), but the current `E2` implementation is **mixed / slightly negative overall** on matched-budget `libero_spatial`. The hypothesis survives, but the stronger implementation claim does not.
 
 ---
 
@@ -139,3 +139,196 @@ If E2 significantly outperforms E0:
 2. Complete E2 training (50K steps)
 3. Run E2 eval
 4. If E2 > E0: run ablations (`world_memory_mode_rollout=zero/random`) to confirm world info is used
+
+---
+
+## 8. March 2026 Update: what survived and what failed
+
+### 8.1 Current matched-budget findings
+
+On a later matched-budget `libero_spatial` comparison, we observed:
+
+| Experiment | Avg SR | Interpretation |
+|------------|--------|----------------|
+| **E0** | **83.6%** | Strong baseline |
+| **E2-pred** | **80.8%** | World branch active, but not a net win |
+| **E2-zero** | **74.0%** | Removing non-zero memory hurts |
+
+Additional ablation result from the partial `random` rollout run:
+
+- On tasks `0-4`, `pred ~= random > zero`
+- This means the world branch is **not ignored**
+- But it does **not** yet prove that the policy is benefiting from the **semantic correctness** of Prophet's predictions
+
+Why the last point matters:
+- `random` was not norm-matched, so `pred ~= random` could still be a **magnitude / conditioning** effect rather than a "content does not matter" result.
+- We therefore added stronger rollout corruptions: `random_scaled`, `signflip`, and `shuffle`.
+
+### 8.2 Strong claim rejected
+
+The following stronger claim is **not** supported by the current results:
+
+> "A small action-independent Prophet that predicts future V-JEPA latents and injects them late into the action head should reliably improve LIBERO control."
+
+That claim is too strong for the evidence.
+
+### 8.3 Revised hypothesis (this is the one we should test next)
+
+The core thesis still survives in a narrower and better form:
+
+> **World model can work as a first-class modality for control, but only if the predictive features are informative enough, view-complete enough, and fused early enough to shape action selection.**
+
+This revised hypothesis has four practical implications:
+
+1. **Representation quality matters**
+   - The issue is not "world modality is wrong".
+   - The issue may be that the current predictive signal is not the right one for contact-rich control.
+
+2. **Action-independent futures are limited**
+   - A single predicted future from observation history alone can easily be wrong for manipulation.
+   - This is a first-principles limitation, not just a training bug.
+
+3. **Fusion position matters**
+   - Late side injection can turn world memory into a weak auxiliary bias.
+   - If world is truly first-class, it may need to affect representation/planning earlier (`F2`, `F3b`).
+
+4. **Observability matters**
+   - Using only the front camera for world memory is likely insufficient for grasp/contact timing.
+   - Wrist and possibly two-view world memory are high-value next tests.
+
+### 8.4 Important correction: we are already using V-JEPA 2
+
+The current codebase is **not** using an old V-JEPA-v1 encoder. The default world encoder is:
+
+- `facebook/vjepa2-vitg-fpc64-256`
+
+So "just upgrade to V-JEPA 2" is **not** the right explanation for the current mixed E2 result.
+The more plausible bottlenecks are:
+
+- action-independent prediction
+- late fusion
+- single-view world memory
+- latent-space mismatch with contact-sensitive control
+
+---
+
+## 9. Comparison with recent video-world-model papers
+
+Recent works support the **thesis direction**, but they do **not** support the weakest version of the current implementation.
+
+### 9.1 What the best-performing methods have in common
+
+Across DiT4DiT, DreamZero, Cosmos Policy, DreamDojo, mimic-video, and VPP, the common pattern is:
+
+- predictive video features are strong and spatially grounded
+- world modeling is either **action-conditioned** or tightly coupled to action learning
+- fusion happens early or the world model is the backbone itself
+- the policy is not asked to decide whether to trust a weak side-channel
+
+### 9.2 Why this differs from our current branch
+
+Our current `smolvla_world` branch does this:
+
+- build `z_t` from a world encoder
+- predict `z_hat_{t+1:t+K}` from `z_{t-T+1:t}`
+- inject those futures only into the action expert through gated cross-attention
+
+This is closer to a **late external-memory adapter** than to DiT4DiT / DreamZero / Cosmos Policy.
+
+### 9.3 Paper-by-paper intuition
+
+- **DiT4DiT** ([arXiv](https://arxiv.org/abs/2603.10448), [project](https://dit4dit.github.io/))
+  - Extracts **intermediate hidden states** from a pretrained video diffusion transformer and feeds them into an action transformer.
+  - The important lesson is not "generate video", but "use predictive video features as the main representation."
+
+- **DreamZero** ([project](https://dreamzero0.github.io/))
+  - Jointly predicts video and action in one diffusion/flow process.
+  - Main lesson: action-conditioned world modeling is stronger than a separate action-free future branch.
+
+- **Cosmos Policy** ([project](https://research.nvidia.com/labs/dir/cosmos-policy/cosmos_policy_index.html))
+  - Turns a pretrained video model into the policy itself.
+  - This is a strong performance reference, but it is a different thesis from "external world modality improves an existing VLA."
+
+- **DreamDojo** ([project](https://dreamdojo-world.github.io/))
+  - Uses a large video world model mainly for planning, simulation replacement, and post-training.
+  - Main lesson: scale and predictive video priors are useful, but not necessarily as a drop-in late side channel.
+
+- **VPP** ([paper](https://proceedings.mlr.press/v267/hu25g.html)) and **mimic-video** ([project](https://mimic-video.github.io/))
+  - These are closer to our desired path than full video sampling.
+  - They suggest that **predictive video features** can be used for action prediction without fully generating futures online.
+
+### 9.4 First-principles synthesis
+
+The literature does **not** say:
+
+> "World as modality is a dead end."
+
+It says something more precise:
+
+> "World as modality works when the predictive representation is strong, grounded, and integrated deeply enough into the control computation."
+
+That is still compatible with the original vision. It just rules out the weakest implementation of that vision.
+
+---
+
+## 10. Next best experiments (2x H100 for 24 hours)
+
+The objective for the next 24 hours is **not** to explore everything. It is to remove the biggest remaining ambiguities with high-signal runs.
+
+### 10.1 Success criteria
+
+At the end of the H100 window, we want to know:
+
+1. Does **semantic** future content matter (`pred > signflip/random_scaled`)?
+2. Is the current bottleneck mainly **observability** (front-only vs wrist)?
+3. Is the current bottleneck mainly **fusion position** (late F1 vs earlier F2/F3b)?
+
+### 10.2 GPU allocation
+
+**GPU 0: causal ablations + wrist world memory**
+
+1. Run `E2-signflip` on the current checkpoint (`50 episodes/task`)
+2. Run `E2-random_scaled` on the current checkpoint (`50 episodes/task`)
+3. Precompute wrist latents:
+   - `image_key=observation.images.image2`
+   - `latent_suffix=m4_wrist`
+4. Train `E2-wrist` from the same SmolVLA init checkpoint
+5. Evaluate `E2-wrist` on `libero_spatial`
+
+**GPU 1: earlier fusion**
+
+1. Train `F2` (`world_inject_suffix_in=true`) with the existing front-camera latents
+2. Evaluate `F2` on `libero_spatial`
+3. If time remains and F2 is promising, train/eval `F3b` (`world_prefix_cross_attn=true`)
+
+### 10.3 Why this ordering
+
+- `signflip` and `random_scaled` tell us whether semantics matter at all.
+- `E2-wrist` tests the strongest obvious missing-information hypothesis.
+- `F2` tests whether late-only injection is the main architectural bottleneck.
+- This yields significantly more information than spending the whole window on more baseline-like runs.
+
+### 10.4 Stop conditions
+
+- If `pred <= signflip` and `pred <= random_scaled`:
+  - current Prophet content is not helping
+  - stop investing in more F1 late-fusion variants
+
+- If `E2-wrist > E2-front` by a meaningful margin:
+  - prioritise multi-view / wrist-aware world memory
+
+- If `F2 > F1`:
+  - prioritise earlier fusion over more late-fusion tuning
+
+- If none of `E2-wrist`, `F2`, or `F3b` beats E0:
+  - stop scaling the current V-JEPA2 + action-free Prophet line
+  - move to a DiT4DiT / mimic-video style video-feature branch
+
+### 10.5 Most likely next branch if the current line stalls
+
+The next architecture to prototype should be:
+
+- **keep SmolVLA as the control baseline**
+- replace the current world branch with **predictive video-model hidden features**
+- prefer **feature extraction** over full video generation
+- fuse those features earlier (`F2` or `F3b`) rather than only at the end of the action expert
