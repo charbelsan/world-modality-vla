@@ -329,6 +329,39 @@ At the end of the H100 window, we want to know:
 The next architecture to prototype should be:
 
 - **keep SmolVLA as the control baseline**
+- **do not replace the main SmolVLA vision encoder first**
 - replace the current world branch with **predictive video-model hidden features**
 - prefer **feature extraction** over full video generation
+- feed those predictive features as a **separate world-modality branch**
 - fuse those features earlier (`F2` or `F3b`) rather than only at the end of the action expert
+
+This is important conceptually:
+
+- the base VLM should still process current images/language/state in the normal way
+- the world model should provide an additional predictive modality to the action path
+
+That is much closer to the original thesis than "swap the vision encoder for a video model."
+
+### 10.6 Better formulation of the next thesis
+
+The next thesis to test is:
+
+> "Predictive video features can act as a first-class world modality for control when they are kept separate from the
+> base VLM perception stream and fused into the action computation with the right inductive bias."
+
+In practice, that means:
+
+1. **Keep current-image perception intact**
+   - SmolVLA still sees the real observations through its normal visual encoder
+
+2. **Add a predictive branch**
+   - frozen or lightly tuned predictive video model
+   - hidden states / tokenizer latents, not full video sampling
+
+3. **Use the world branch for action, not for replacing perception**
+   - action expert attends to predictive features
+   - optionally prefix cross-attn if we want world to influence planning/representation
+
+4. **Optionally regularize the action path to stay predictive**
+   - auxiliary next-feature / next-image-token loss from the action transformer
+   - this is a principled way to force semantic alignment without turning the whole policy into a video generator

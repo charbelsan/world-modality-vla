@@ -47,6 +47,16 @@ VideoWorld’s CALVIN pipeline is explicitly **two-stage**:
 VideoWorld “`la_action` tokens” are conceptually very close to what we want `z_future` to be:
 **a compact, dynamics-bearing latent** that is informative for control.
 
+Important design choice for this repo:
+
+- **do not replace SmolVLA's normal vision encoder first**
+- instead, keep the base perception path intact and treat predictive video features as a **separate world branch**
+
+This preserves the original claim:
+
+> the world model is an additional first-class modality for the action computation,
+> not a replacement for ordinary visual perception.
+
 We can adopt the principle without adopting their full generative policy:
 
 - Replace our current world source (`vjepa` pooled latents) with **dynamics tokens**:
@@ -71,10 +81,14 @@ We can adopt the principle without adopting their full generative policy:
 4) **Corruption tests**
 - shuffle/zero/random tokens; SR should drop once the gate opens (proof of reliance).
 
+5) **Auxiliary predictive head from the action path**
+- once the video-feature branch exists, add a lightweight auxiliary head from the action-expert hidden states to
+  predict the next video-token block (or later, next-image tokens)
+- this tests whether forcing the action path to stay predictive helps make world memory semantically useful
+
 ## What to Be Careful About (for Our Repo)
 
 - Don’t copy VideoWorld’s token-stream concatenation as the default; it recreates the “Model-C” interference risk.
 - If we do discrete world tokens, prefer:
   - CE over code indices (or vector-quantized reconstruction loss), not pure MSE on near-invariant vectors.
   - multiple tokens (`K>1`) rather than a single global vector.
-

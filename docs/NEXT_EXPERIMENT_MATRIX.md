@@ -188,27 +188,52 @@ At that point, move to Phase B.
 
 This is the video-feature branch inspired by DiT4DiT / mimic-video / VPP style results.
 
+### B0. Design rule for the next branch
+
+**Do not replace SmolVLA's vision encoder first.**
+
+SmolVLA is first a VLM backbone with an added action expert. Replacing its main visual encoder immediately would mix
+two changes at once:
+
+- changing the control backbone representation
+- changing the world-modality branch
+
+That would destroy attribution.
+
+The better first-class-modality interpretation is:
+
+- keep the normal SmolVLA vision-language-state path intact
+- add a **separate predictive video branch**
+- let the action path attend to that predictive branch as world memory
+
+So the next branch should test:
+
+> "Can predictive video features behave like a first-class world modality for the action path, while the base VLM
+> still processes normal images and language in the usual way?"
+
+This is closer to the original thesis than "replace the visual encoder with a video model."
+
 ### B1. Frozen predictive video features as world modality
 
 **Core idea:**
 
 - do **not** generate videos online
-- do **not** replace the policy immediately
+- do **not** replace the policy backbone
 - extract hidden features from a predictive video model
 - inject them as the world modality into SmolVLA
 
 Minimal experiment:
 
 - frozen predictive video model
-- single chosen hidden layer / timestep
-- late injection (`F1`) first
+- single chosen hidden layer / timestep or tokenizer latent
+- world features only go to the action path (`F1` first, then `F2/F3b`)
 - compare against the current JEPA `E2`
 
 Question answered:
 
 - is the bottleneck **feature quality**, not the world-modality idea itself?
 
-### B2. Same video features, earlier fusion
+### B2. Video features + earlier fusion
 
 Run:
 
@@ -234,7 +259,29 @@ Question answered:
 
 - is view completeness the key enabler once the features are stronger?
 
-### B4. Only after B1/B2 show signal: multi-hypothesis or action-conditioned futures
+### B4. Auxiliary future prediction from the action path
+
+If we want world to be genuinely first-class, the action transformer should not only **consume** predictive video
+features. It should also be regularized to preserve or predict useful future information.
+
+Minimal version:
+
+- keep the main policy loss unchanged
+- add a small auxiliary head on top of action-expert hidden states
+- predict either:
+  - the next video feature block
+  - or a lightweight next-image / next-token target
+
+Question answered:
+
+- does forcing the action path to stay predictive make the world branch more semantically useful?
+
+This is the safer version of "predict the next image" for our setup:
+
+- first predict **video-model features or tokens**
+- only later consider pixels or full frame generation
+
+### B5. Only after B1-B4 show signal: multi-hypothesis or action-conditioned futures
 
 Do **not** start with MoE or imagination banks.
 
