@@ -223,3 +223,10 @@ Also back up:
 - `/opt/dlami/nvme/world-modality-vla/cache`
 - `/opt/dlami/nvme/world-modality-vla/eval_libero_results`
 - any custom logs under `/opt/dlami/nvme/world-modality-vla/logs`
+
+If the P5 host has no AWS credentials, pull artifacts from your workstation instead:
+
+```bash
+./ops/pull_p5_artifacts.sh ./p5_artifacts --mode minimal
+./ops/pull_p5_artifacts.sh ./p5_artifacts --mode full
+```

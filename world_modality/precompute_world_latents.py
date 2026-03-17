@@ -8,7 +8,7 @@ from typing import List, Tuple
 
 import numpy as np
 import torch
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader, Dataset, Subset
 from tqdm import tqdm
 
 from .config import DataConfig
@@ -199,7 +199,9 @@ def main():
     if args.num_workers > 0:
         loader_kwargs["prefetch_factor"] = 4
         loader_kwargs["persistent_workers"] = True
-    loader = DataLoader(frame_ds, **loader_kwargs)
+
+    def make_loader(dataset):
+        return DataLoader(dataset, **loader_kwargs)
 
     def to_tensor(x):
         if isinstance(x, np.ndarray):
@@ -291,6 +293,8 @@ def main():
         print(f"Resuming latents write at row offset={offset}/{total}: {cache_paths.latents_path}")
 
         # Verify embedding dimension matches current encoder settings.
+        resume_ds = Subset(frame_ds, range(offset, total))
+        loader = make_loader(resume_ds)
         first_batch = next(iter(loader))
         with torch.no_grad():
             first_emb = encode_batch(first_batch)
@@ -301,6 +305,7 @@ def main():
                 "Delete the file and recompute with consistent `--vision_model_name/--temporal_window`."
             )
     else:
+        loader = make_loader(frame_ds)
         # Probe embedding dimension with a single batch.
         first_batch = next(iter(loader))
         with torch.no_grad():
@@ -320,12 +325,20 @@ def main():
         f"(source={args.world_latents_source}, dim={int(latents_mm.shape[1])}, start_row={offset})"
     )
     start_row = int(offset)
+    if offset == 0:
+        loader = make_loader(frame_ds)
     with torch.no_grad():
         for batch_imgs in tqdm(loader, desc="Encoding latents"):
             emb = encode_batch(batch_imgs).detach().cpu().numpy().astype(np.float16)
             bsz = emb.shape[0]
-            latents_mm[offset : offset + bsz] = emb
-            offset += bsz
+            remaining = total - offset
+            if remaining <= 0:
+                break
+            write_bsz = min(bsz, remaining)
+            latents_mm[offset : offset + write_bsz] = emb[:write_bsz]
+            offset += write_bsz
+            if write_bsz < bsz:
+                break
 
     latents_mm.flush()
     print(f"Saved latents to {cache_paths.latents_path}")
