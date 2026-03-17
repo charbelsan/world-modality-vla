@@ -44,9 +44,11 @@ COPY pyproject.toml requirements.txt README.md ./
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 
 # Install Python dependencies used by the current SmolVLA/LeRobot path.
+# `requirements.txt` already includes a compatible `lerobot` release for the
+# current Python base image; re-installing from `git` can pull a newer version
+# that requires Python >= 3.12 and breaks the image build.
 RUN pip install --no-cache-dir -r requirements.txt \
     && pip install --no-cache-dir \
-        "lerobot @ git+https://github.com/huggingface/lerobot.git" \
         mujoco \
         libero
 
