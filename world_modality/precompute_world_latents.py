@@ -88,7 +88,15 @@ class TemporalClipDataset(Dataset):
             frames.append(frame)
 
         # Stack to [m, H, W, C] or [m, C, H, W] depending on format
-        frames = torch.stack([torch.as_tensor(np.array(f)) for f in frames])
+        tensor_frames = []
+        for frame in frames:
+            if isinstance(frame, torch.Tensor):
+                tensor_frames.append(frame)
+            elif isinstance(frame, np.ndarray):
+                tensor_frames.append(torch.from_numpy(frame))
+            else:
+                tensor_frames.append(torch.as_tensor(np.asarray(frame)))
+        frames = torch.stack(tensor_frames)
         return frames
 
 
