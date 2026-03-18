@@ -6,6 +6,12 @@ See also:
 
 - [NEXT_EXPERIMENT_MATRIX.md](/home/charbel/charbel/world-modality-vla/docs/NEXT_EXPERIMENT_MATRIX.md)
 - [launch_h100_followup_queue.sh](/home/charbel/charbel/world-modality-vla/scripts/launch_h100_followup_queue.sh)
+- [P5_24H_COSMOS_PIVOT.md](/home/charbel/charbel/world-modality-vla/docs/P5_24H_COSMOS_PIVOT.md)
+
+Note:
+
+- this doc describes the **JEPA-branch closure plan**
+- for the new 8x H100 P5 block, the recommended main direction is now the **Cosmos feature pivot** in [P5_24H_COSMOS_PIVOT.md](/home/charbel/charbel/world-modality-vla/docs/P5_24H_COSMOS_PIVOT.md)
 
 Primary questions:
 
