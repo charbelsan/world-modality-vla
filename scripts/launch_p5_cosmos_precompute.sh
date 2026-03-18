@@ -69,9 +69,9 @@ launch_precompute() {
     --shard_index "${shard_index}"
     --resume
   )
-  echo "=== ${tag} on GPU ${gpu_id} ==="
+  echo "=== ${tag} on GPU ${gpu_id} ===" >&2
   if [[ "${DRY_RUN}" == "1" ]]; then
-    echo "CUDA_VISIBLE_DEVICES=${gpu_id} ${cmd[*]}"
+    echo "CUDA_VISIBLE_DEVICES=${gpu_id} ${cmd[*]}" >&2
     return
   fi
   (

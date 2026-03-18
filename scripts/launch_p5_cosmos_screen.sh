@@ -105,9 +105,9 @@ run_variant() {
   if [[ -n "${action_flag}" ]]; then
     eval_extra+=("${action_flag}")
   fi
-  echo "=== ${exp_name} on GPU ${gpu_id} ==="
+  echo "=== ${exp_name} on GPU ${gpu_id} ===" >&2
   if [[ "${DRY_RUN}" == "1" ]]; then
-    echo "train -> ${out_dir}"
+    echo "train -> ${out_dir}" >&2
     return
   fi
   (
