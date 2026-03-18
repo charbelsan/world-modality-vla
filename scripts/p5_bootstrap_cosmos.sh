@@ -129,7 +129,7 @@ if [[ ! -d "${COSMOS_ROOT}/.git" ]]; then
 fi
 
 uv pip install --python "${VENV_DIR}/bin/python" \
-  "diffusers==0.36.0" \
+  "diffusers==0.35.2" \
   "transformers==4.51.3" \
   "huggingface-hub<1.0" \
   "lerobot==0.4.1" \
