@@ -117,7 +117,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--num_workers", type=int, default=8)
     parser.add_argument("--device", type=str, default="auto", choices=["auto", "cpu", "cuda"])
-    parser.add_argument("--world_latents_source", type=str, default="vjepa", choices=["dino", "vjepa"])
+    parser.add_argument("--world_latents_source", type=str, default="vjepa", choices=["dino", "vjepa", "cosmos"])
     parser.add_argument("--vision_model_name", type=str, default="facebook/dinov2-base")
     parser.add_argument("--vjepa_checkpoint", type=str, default="", help="Optional TorchScript encoder for V-JEPA.")
     parser.add_argument("--temporal_window", type=int, default=1,
@@ -137,6 +137,8 @@ def parse_args() -> argparse.Namespace:
         default=True,
         help="If output .npy exists, resume by appending from the last written row (assumes trailing zeros).",
     )
+    parser.add_argument("--num_shards", type=int, default=1, help="Deterministic shard count for multi-GPU precompute.")
+    parser.add_argument("--shard_index", type=int, default=0, help="0-based shard index when num_shards > 1.")
     return parser.parse_args()
 
 
@@ -159,10 +161,22 @@ def _resume_offset_from_trailing_zeros(latents: np.ndarray, *, block_rows: int =
     return 0
 
 
+def _sharded_output_path(path: str, *, shard_index: int, num_shards: int) -> str:
+    if num_shards <= 1:
+        return path
+    base, ext = os.path.splitext(path)
+    return f"{base}.shard{shard_index:02d}-of-{num_shards:02d}{ext}"
+
+
 def main():
     args = parse_args()
     device = resolve_device(args.device)
     temporal_window = args.temporal_window
+    resolved_model_name = str(args.vision_model_name)
+    if int(args.num_shards) < 1:
+        raise ValueError("--num_shards must be >= 1")
+    if not (0 <= int(args.shard_index) < int(args.num_shards)):
+        raise ValueError("--shard_index must satisfy 0 <= shard_index < num_shards")
 
     data_cfg = DataConfig(
         dataset_name=args.dataset_name,
@@ -180,9 +194,27 @@ def main():
 
     ds = LeRobotDataset(data_cfg.dataset_name)
     cache_paths = build_latent_cache_paths(data_cfg, args.split, args.world_latents_source)
+    total = len(ds)
+    shard_mode = int(args.num_shards) > 1
+    shard_indices = np.arange(total, dtype=np.int64)[int(args.shard_index) :: int(args.num_shards)]
+    latents_path = _sharded_output_path(
+        cache_paths.latents_path,
+        shard_index=int(args.shard_index),
+        num_shards=int(args.num_shards),
+    )
+    metadata_path = _sharded_output_path(
+        cache_paths.latents_path.replace(".npy", "_metadata.json"),
+        shard_index=int(args.shard_index),
+        num_shards=int(args.num_shards),
+    )
 
     if temporal_window > 1:
         print(f"[Temporal] Using m={temporal_window} frames per embedding (latent_suffix={data_cfg.latent_suffix})")
+    if shard_mode:
+        print(
+            f"[Shards] shard {int(args.shard_index) + 1}/{int(args.num_shards)} "
+            f"contains {len(shard_indices)} rows out of {total}"
+        )
 
     # Choose dataset based on temporal_window
     if temporal_window > 1:
@@ -217,7 +249,8 @@ def main():
     if args.world_latents_source == "dino":
         if temporal_window > 1:
             raise ValueError("Temporal encoding only supported for V-JEPA, not DINO")
-        encoder = VisionEncoder(args.vision_model_name, device=str(device))
+        resolved_model_name = str(args.vision_model_name)
+        encoder = VisionEncoder(resolved_model_name, device=str(device))
 
         def encode_batch(batch_imgs: List) -> torch.Tensor:
             if isinstance(batch_imgs, torch.Tensor):
@@ -229,7 +262,7 @@ def main():
             imgs = imgs.to(device)
             return encoder.encode(imgs)
 
-    else:
+    elif args.world_latents_source == "vjepa":
         if device.type != "cuda":
             raise RuntimeError("V-JEPA latents require CUDA for reasonable throughput.")
         if args.vjepa_checkpoint:
@@ -248,11 +281,11 @@ def main():
                 return encode_fn(imgs)
 
         else:
-            model_name = args.vision_model_name
-            if "vjepa" not in model_name.lower():
-                model_name = "facebook/vjepa2-vitg-fpc64-256"
-                print(f"[V-JEPA] Using default HF model: {model_name}")
-            encoder = VisionEncoder(model_name, device=str(device))
+            resolved_model_name = str(args.vision_model_name)
+            if "vjepa" not in resolved_model_name.lower():
+                resolved_model_name = "facebook/vjepa2-vitg-fpc64-256"
+                print(f"[V-JEPA] Using default HF model: {resolved_model_name}")
+            encoder = VisionEncoder(resolved_model_name, device=str(device))
 
             if temporal_window > 1:
                 # Multi-frame temporal encoding
@@ -273,27 +306,49 @@ def main():
                         imgs = imgs.permute(0, 3, 1, 2)
                     imgs = imgs.to(device)
                     return encoder.encode(imgs)
+    else:
+        resolved_model_name = str(args.vision_model_name)
+        if "cosmos" not in resolved_model_name.lower() and "wan2pt1" not in resolved_model_name.lower():
+            resolved_model_name = "cosmos_wan2pt1_pool4_m4"
+            print(f"[Cosmos] Using default tokenizer encoder: {resolved_model_name}")
+        encoder = VisionEncoder(resolved_model_name, device=str(device), dtype="float32")
 
-    total = len(ds)
-    os.makedirs(os.path.dirname(cache_paths.latents_path), exist_ok=True)
+        if temporal_window > 1:
+            def encode_batch(batch_clips: torch.Tensor) -> torch.Tensor:
+                if batch_clips.dim() == 5 and batch_clips.shape[-1] == 3:
+                    batch_clips = batch_clips.permute(0, 1, 4, 2, 3)
+                return encoder.encode_temporal(batch_clips)
+        else:
+            def encode_batch(batch_imgs: List) -> torch.Tensor:
+                if isinstance(batch_imgs, torch.Tensor):
+                    imgs = batch_imgs
+                else:
+                    imgs = torch.stack([to_tensor(x) for x in batch_imgs])
+                if imgs.dim() == 4 and imgs.shape[-1] == 3:
+                    imgs = imgs.permute(0, 3, 1, 2)
+                return encoder.encode(imgs)
+
+    target_ds = frame_ds if not shard_mode else Subset(frame_ds, shard_indices.tolist())
+    target_rows = len(target_ds)
+    os.makedirs(os.path.dirname(latents_path), exist_ok=True)
     offset = 0
     latents_mm: np.ndarray
 
-    if bool(args.resume) and os.path.exists(cache_paths.latents_path):
-        latents_mm = np.load(cache_paths.latents_path, mmap_mode="r+")
-        if int(latents_mm.shape[0]) != int(total):
+    if bool(args.resume) and os.path.exists(latents_path):
+        latents_mm = np.load(latents_path, mmap_mode="r+")
+        if int(latents_mm.shape[0]) != int(target_rows):
             raise ValueError(
-                f"Existing latents file has shape[0]={int(latents_mm.shape[0])} but dataset has {int(total)}. "
-                "Delete the file and recompute with the same dataset revision/order."
+                f"Existing latents file has shape[0]={int(latents_mm.shape[0])} but target rows={int(target_rows)}. "
+                "Delete the file and recompute with the same dataset revision/order/shard config."
             )
         offset = _resume_offset_from_trailing_zeros(latents_mm)
-        if offset >= total:
-            print(f"Latents already complete: {cache_paths.latents_path} (rows={total})")
+        if offset >= target_rows:
+            print(f"Latents already complete: {latents_path} (rows={target_rows})")
             return
-        print(f"Resuming latents write at row offset={offset}/{total}: {cache_paths.latents_path}")
+        print(f"Resuming latents write at row offset={offset}/{target_rows}: {latents_path}")
 
         # Verify embedding dimension matches current encoder settings.
-        resume_ds = Subset(frame_ds, range(offset, total))
+        resume_ds = Subset(target_ds, range(offset, target_rows))
         loader = make_loader(resume_ds)
         first_batch = next(iter(loader))
         with torch.no_grad():
@@ -305,7 +360,7 @@ def main():
                 "Delete the file and recompute with consistent `--vision_model_name/--temporal_window`."
             )
     else:
-        loader = make_loader(frame_ds)
+        loader = make_loader(target_ds)
         # Probe embedding dimension with a single batch.
         first_batch = next(iter(loader))
         with torch.no_grad():
@@ -314,24 +369,24 @@ def main():
 
         # Create memmap for incremental writing.
         latents_mm = np.lib.format.open_memmap(
-            cache_paths.latents_path,
+            latents_path,
             mode="w+",
             dtype=np.float16,
-            shape=(total, emb_dim),
+            shape=(target_rows, emb_dim),
         )
 
     print(
-        f"Encoding {total} frames to {cache_paths.latents_path} "
+        f"Encoding {target_rows} frames to {latents_path} "
         f"(source={args.world_latents_source}, dim={int(latents_mm.shape[1])}, start_row={offset})"
     )
     start_row = int(offset)
     if offset == 0:
-        loader = make_loader(frame_ds)
+        loader = make_loader(target_ds)
     with torch.no_grad():
         for batch_imgs in tqdm(loader, desc="Encoding latents"):
             emb = encode_batch(batch_imgs).detach().cpu().numpy().astype(np.float16)
             bsz = emb.shape[0]
-            remaining = total - offset
+            remaining = target_rows - offset
             if remaining <= 0:
                 break
             write_bsz = min(bsz, remaining)
@@ -341,24 +396,26 @@ def main():
                 break
 
     latents_mm.flush()
-    print(f"Saved latents to {cache_paths.latents_path}")
+    print(f"Saved latents to {latents_path}")
 
     # Save metadata JSON for reproducibility (always).
     metadata = {
         "image_key": args.image_key,
         "latent_suffix": getattr(data_cfg, "latent_suffix", ""),
         "temporal_window": temporal_window,
-        "model": model_name if args.world_latents_source == "vjepa" else args.vision_model_name,
+        "model": resolved_model_name,
         "pooling": "mean_spatial_then_temporal" if temporal_window > 1 else "mean_spatial",
         "embedding_dim": int(latents_mm.shape[1]),
         "total_frames": total,
+        "target_rows": target_rows,
         "dataset": args.dataset_name,
         "split": args.split,
         "source": args.world_latents_source,
+        "num_shards": int(args.num_shards),
+        "shard_index": int(args.shard_index),
         "resume_start_row": start_row,
         "final_written_rows": int(offset),
     }
-    metadata_path = cache_paths.latents_path.replace(".npy", "_metadata.json")
     with open(metadata_path, "w") as f:
         json.dump(metadata, f, indent=2)
     print(f"Saved metadata to {metadata_path}")

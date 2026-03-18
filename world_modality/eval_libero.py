@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import sys
 from collections import deque
 from typing import Deque, Optional
@@ -134,8 +135,9 @@ def _infer_latent_dim(prophet_state_dict: dict) -> int:
 
 def _infer_temporal_window(latent_suffix: str) -> int:
     s = (latent_suffix or "").strip().lower()
-    if s.startswith("m") and s[1:].isdigit():
-        return int(s[1:])
+    match = re.search(r"(?:^|_)m(\d+)(?:$|_)", s)
+    if match is not None:
+        return int(match.group(1))
     return 1
 
 
@@ -491,6 +493,8 @@ def main():
             vision_model = args.vision_model_name
         elif world_source == "vjepa":
             vision_model = "facebook/vjepa2-vitg-fpc64-256"
+        elif world_source == "cosmos":
+            vision_model = "cosmos_wan2pt1_pool4_m4"
         else:
             vision_model = "facebook/dinov2-base"
 
@@ -500,7 +504,7 @@ def main():
             else _infer_temporal_window(str(config.get("latent_suffix", "")))
         )
         if world_source == "dino" and temporal_window > 1:
-            raise ValueError("temporal_window>1 is only supported for world_latents_source=vjepa")
+            raise ValueError("temporal_window>1 is only supported for world_latents_source=vjepa or cosmos")
 
         world_encoder = VisionEncoder(
             model_name=vision_model,

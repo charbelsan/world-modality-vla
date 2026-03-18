@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import deque
+import re
 from typing import Optional
 
 import torch
@@ -413,10 +414,11 @@ class SmolVLAWorldPolicy(SmolVLAPolicy):
         w = int(getattr(self.config, "world_rollout_temporal_window", 0) or 0)
         if w > 0:
             return w
-        # Infer from latent_suffix like "m4" (precompute temporal_window=4).
+        # Infer from latent_suffix tokens like "m4", "m4_wrist", or "cosmos_m4_front".
         suf = str(getattr(self.config, "latent_suffix", "") or "")
-        if suf.startswith("m") and suf[1:].isdigit():
-            return max(1, int(suf[1:]))
+        match = re.search(r"(?:^|_)m(\d+)(?:$|_)", suf)
+        if match is not None:
+            return max(1, int(match.group(1)))
         return 1
 
     def _ensure_world_modules(self, detected_latent_dim: int) -> None:
