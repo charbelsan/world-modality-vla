@@ -7,4 +7,4 @@ export FRONT_SUFFIX=${FRONT_SUFFIX:-m4_cogvideo_front}
 export WRIST_SUFFIX=${WRIST_SUFFIX:-m4_cogvideo_wrist}
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-exec "${SCRIPT_DIR}/launch_p5_cosmos_precompute.sh" "$@"
+exec bash "${SCRIPT_DIR}/launch_p5_cosmos_precompute.sh" "$@"

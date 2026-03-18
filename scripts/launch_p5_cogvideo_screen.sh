@@ -10,4 +10,4 @@ export OUTPUT_ROOT=${OUTPUT_ROOT:-outputs/train/p5_cogvideo_screen}
 export LOG_DIR=${LOG_DIR:-logs/cogvideo_screen}
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-exec "${SCRIPT_DIR}/launch_p5_cosmos_screen.sh" "$@"
+exec bash "${SCRIPT_DIR}/launch_p5_cosmos_screen.sh" "$@"
