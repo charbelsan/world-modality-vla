@@ -132,6 +132,7 @@ uv pip install --python "${VENV_DIR}/bin/python" \
   "diffusers==0.35.2" \
   "transformers==4.51.3" \
   "huggingface-hub<1.0" \
+  "num2words" \
   "lerobot==0.4.1" \
   bddl cloudpickle draccus easydict gym h5py "imageio[ffmpeg]" libero mediapy mujoco==3.3.2
 uv pip install --python "${VENV_DIR}/bin/python" -e "${COSMOS_ROOT}"
