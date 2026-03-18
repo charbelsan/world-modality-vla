@@ -111,7 +111,8 @@ fi
 if [[ "${venv_version_ok}" != "1" ]]; then
   rm -rf "${VENV_DIR}"
   uv python install "${PYTHON_VERSION}"
-  uv venv --python "${PYTHON_VERSION}" --seed "${VENV_DIR}"
+  MANAGED_PYTHON="$(uv python find "${PYTHON_VERSION}")"
+  uv venv "${VENV_DIR}" --python "${MANAGED_PYTHON}" --seed --no-project
 fi
 
 source "${VENV_DIR}/bin/activate"
