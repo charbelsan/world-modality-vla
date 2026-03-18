@@ -26,6 +26,7 @@ INSTALL_TORCH=${INSTALL_TORCH:-1}
 TORCH_VERSION=${TORCH_VERSION:-2.7.0}
 TORCHVISION_VERSION=${TORCHVISION_VERSION:-0.22.0}
 TORCH_INDEX_URL=${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cu128}
+PYTHON_VERSION=${PYTHON_VERSION:-3.12}
 ENV_FILE=${ENV_FILE:-${PRESERVED_ROOT}/p5_cosmos_env.sh}
 
 if [[ ! -f "${REPO_ROOT}/pyproject.toml" ]]; then
@@ -95,9 +96,22 @@ else
   git -C "${COSMOS_ROOT}" pull --ff-only
 fi
 
-if [[ ! -x "${VENV_DIR}/bin/python" || ! -f "${VENV_DIR}/bin/activate" ]]; then
+venv_version_ok=0
+if [[ -x "${VENV_DIR}/bin/python" && -f "${VENV_DIR}/bin/activate" ]]; then
+  current_python="$("${VENV_DIR}/bin/python" - <<'PY'
+import sys
+print(f"{sys.version_info.major}.{sys.version_info.minor}")
+PY
+)"
+  if [[ "${current_python}" == "${PYTHON_VERSION}" ]]; then
+    venv_version_ok=1
+  fi
+fi
+
+if [[ "${venv_version_ok}" != "1" ]]; then
   rm -rf "${VENV_DIR}"
-  python3 -m venv "${VENV_DIR}"
+  uv python install "${PYTHON_VERSION}"
+  uv venv --python "${PYTHON_VERSION}" "${VENV_DIR}"
 fi
 
 source "${VENV_DIR}/bin/activate"
