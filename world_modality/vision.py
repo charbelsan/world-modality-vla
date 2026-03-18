@@ -3,6 +3,7 @@ from typing import List, Union
 import torch
 from PIL import Image
 
+from .cogvideo_vision import CogVideoLatentEncoder
 from .cosmos_vision import CosmosLatentEncoder
 from .device import resolve_device
 
@@ -15,6 +16,7 @@ class VisionEncoder(torch.nn.Module):
     - V-JEPA-v2 (facebook/vjepa2-*) - video-native pooled embeddings
     - DINOv2 (facebook/dinov2-*) - image-native pooled embeddings
     - Cosmos tokenizer latents (`cosmos_*`) - pooled video-tokenizer features
+    - CogVideoX VAE latents (`cogvideo_*`) - pooled open video-VAE features
 
     Exposes an `encode(images)` method that returns pooled embeddings [B, d_e].
     """
@@ -30,6 +32,7 @@ class VisionEncoder(torch.nn.Module):
         self.model_name = model_name
         self.is_vjepa = "vjepa" in model_name.lower()
         self.is_cosmos = "cosmos" in model_name.lower() or "wan2pt1" in model_name.lower()
+        self.is_cogvideo = "cogvideo" in model_name.lower()
 
         torch_dtype = torch.float16 if dtype == "float16" else torch.float32
 
@@ -37,6 +40,11 @@ class VisionEncoder(torch.nn.Module):
             self.processor = None
             self.backbone = CosmosLatentEncoder(model_name=model_name, device=device, dtype=dtype)
             print(f"[VisionEncoder] Loaded Cosmos tokenizer encoder: {model_name}")
+            print(f"[VisionEncoder] Embedding dim: {self.backbone.embedding_dim}")
+        elif self.is_cogvideo:
+            self.processor = None
+            self.backbone = CogVideoLatentEncoder(model_name=model_name, device=device, dtype=dtype)
+            print(f"[VisionEncoder] Loaded CogVideoX VAE encoder: {model_name}")
             print(f"[VisionEncoder] Embedding dim: {self.backbone.embedding_dim}")
         elif self.is_vjepa:
             # V-JEPA-v2: Use AutoVideoProcessor for video-native model
@@ -79,7 +87,7 @@ class VisionEncoder(torch.nn.Module):
         """Return the embedding dimension of the model."""
         if hasattr(self.backbone, "config"):
             return self.backbone.config.hidden_size
-        if self.is_cosmos:
+        if self.is_cosmos or self.is_cogvideo:
             return self.backbone.embedding_dim
         return 768  # Default fallback
 
@@ -94,7 +102,7 @@ class VisionEncoder(torch.nn.Module):
         Returns:
             Tensor of shape [B, d_e] with pooled embeddings.
         """
-        if self.is_cosmos:
+        if self.is_cosmos or self.is_cogvideo:
             return self.backbone.encode(images)
         if self.is_vjepa:
             return self._encode_vjepa_batch(images)
@@ -118,10 +126,10 @@ class VisionEncoder(torch.nn.Module):
         """
         import torch.nn.functional as F
 
-        if self.is_cosmos:
+        if self.is_cosmos or self.is_cogvideo:
             return self.backbone.encode_temporal(frames)
         if not self.is_vjepa:
-            raise ValueError("encode_temporal only supported for V-JEPA or Cosmos models")
+            raise ValueError("encode_temporal only supported for V-JEPA, Cosmos, or CogVideo models")
 
         B, m, C, H, W = frames.shape
 

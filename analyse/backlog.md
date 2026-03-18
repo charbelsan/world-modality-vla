@@ -27,6 +27,8 @@ Conventions:
 - [ ] Add an 8-GPU Cosmos precompute + merge launcher
 - [ ] Add an 8-GPU Cosmos screening launcher for the first training/eval matrix
 - [ ] Replace the gated official Cosmos Predict tokenizer dependency with the public `Cosmos-Tokenizer` JIT encoder path
+- [ ] Implement the ungated `cogvideo` world source as the immediate open video-feature branch
+- [ ] Add a P5 day-1 launcher for `cogvideo` precompute + screening
 
 ## Pending
 
@@ -42,6 +44,9 @@ Conventions:
 - [ ] Add one extra seed for the best Cosmos variant before making a strong claim
 - [ ] Decide whether token-level Cosmos features are needed after pooled-feature parity results
 - [ ] Decide whether an auxiliary next-feature prediction head from action hidden states is worth adding
+- [ ] Run `G0-front`, seed 0: CogVideoX VAE world features, current action-side interface
+- [ ] Run `G0-wrist`, seed 0
+- [ ] Run `G1-F2-front`, seed 0: CogVideoX VAE features with earlier action-side fusion
 
 ## Blocked
 
@@ -50,6 +55,7 @@ Conventions:
 - [ ] DiT4DiT-style intermediate hidden-state extraction is blocked until the simpler tokenizer-latent branch is stable and benchmarked
 - [ ] Full action-conditioned world modeling is blocked until we finish the clean “better source, same policy” comparison
 - [ ] Official Cosmos Predict hidden-feature extraction is blocked on gated Hugging Face weights / approval (`nvidia/Cosmos-Predict2.5-2B`)
+- [ ] Public Cosmos tokenizer latents are blocked on gated Hugging Face weights / approval (`nvidia/Cosmos-1.0-Tokenizer-CV8x8x8`)
 
 ## Deprioritized
 

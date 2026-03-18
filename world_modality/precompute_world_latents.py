@@ -117,7 +117,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--num_workers", type=int, default=8)
     parser.add_argument("--device", type=str, default="auto", choices=["auto", "cpu", "cuda"])
-    parser.add_argument("--world_latents_source", type=str, default="vjepa", choices=["dino", "vjepa", "cosmos"])
+    parser.add_argument("--world_latents_source", type=str, default="vjepa", choices=["dino", "vjepa", "cosmos", "cogvideo"])
     parser.add_argument("--vision_model_name", type=str, default="facebook/dinov2-base")
     parser.add_argument("--vjepa_checkpoint", type=str, default="", help="Optional TorchScript encoder for V-JEPA.")
     parser.add_argument("--temporal_window", type=int, default=1,
@@ -306,11 +306,32 @@ def main():
                         imgs = imgs.permute(0, 3, 1, 2)
                     imgs = imgs.to(device)
                     return encoder.encode(imgs)
-    else:
+    elif args.world_latents_source == "cosmos":
         resolved_model_name = str(args.vision_model_name)
         if "cosmos" not in resolved_model_name.lower() and "wan2pt1" not in resolved_model_name.lower():
             resolved_model_name = "cosmos_cv8x8x8_pool4_m4"
             print(f"[Cosmos] Using default tokenizer encoder: {resolved_model_name}")
+        encoder = VisionEncoder(resolved_model_name, device=str(device), dtype="float32")
+
+        if temporal_window > 1:
+            def encode_batch(batch_clips: torch.Tensor) -> torch.Tensor:
+                if batch_clips.dim() == 5 and batch_clips.shape[-1] == 3:
+                    batch_clips = batch_clips.permute(0, 1, 4, 2, 3)
+                return encoder.encode_temporal(batch_clips)
+        else:
+            def encode_batch(batch_imgs: List) -> torch.Tensor:
+                if isinstance(batch_imgs, torch.Tensor):
+                    imgs = batch_imgs
+                else:
+                    imgs = torch.stack([to_tensor(x) for x in batch_imgs])
+                if imgs.dim() == 4 and imgs.shape[-1] == 3:
+                    imgs = imgs.permute(0, 3, 1, 2)
+                return encoder.encode(imgs)
+    else:
+        resolved_model_name = str(args.vision_model_name)
+        if "cogvideo" not in resolved_model_name.lower():
+            resolved_model_name = "cogvideo_2b_pool4_m4"
+            print(f"[CogVideo] Using default VAE encoder: {resolved_model_name}")
         encoder = VisionEncoder(resolved_model_name, device=str(device), dtype="float32")
 
         if temporal_window > 1:

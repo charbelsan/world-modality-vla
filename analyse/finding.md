@@ -20,6 +20,7 @@ Rule:
 | 2026-03-18 | P5 capacity-block data loss | NVMe-only outputs disappeared when the instance expired | Ephemeral storage is unacceptable for checkpoints and analysis artifacts | Write all outputs, logs, caches, and checkpoints to `/mnt/preserved` and sync backups regularly |
 | 2026-03-18 | Current research decision | JEPA + late fusion is no longer the main line | The next high-value question is source quality, not one more JEPA tweak | Prioritize `Cosmos features vs JEPA features` with SmolVLA kept unchanged |
 | 2026-03-18 | Official Cosmos Predict tokenizer path on P5 | Blocked by gated HF repo access (`nvidia/Cosmos-Predict2.5-2B`) during smoke tests | The 24h P5 block cannot depend on gated weights or manual approval loops | Switch v0 Cosmos branch to the public `Cosmos-Tokenizer` JIT encoder (`nvidia/Cosmos-1.0-Tokenizer-CV8x8x8`) and run the source comparison with that |
+| 2026-03-18 | Public Cosmos tokenizer fallback | Also gated on HF for this machine/account (`nvidia/Cosmos-1.0-Tokenizer-CV8x8x8`) | We need a truly open video-latent source to exploit the P5 immediately | Use open CogVideoX VAE latents as the first ungated video-feature branch while keeping the same SmolVLA world-memory interface |
 
 ## Current Working Thesis
 

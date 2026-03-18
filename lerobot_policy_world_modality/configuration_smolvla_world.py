@@ -7,7 +7,7 @@ from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 
 
 # Type aliases for documentation (draccus can't parse Literal from CLI, so we use str)
-# Valid values: WorldLatentsSource: "dino" | "vjepa" | "cosmos"
+# Valid values: WorldLatentsSource: "dino" | "vjepa" | "cosmos" | "cogvideo"
 # Valid values: WorldMemoryMode: "pred" | "oracle" | "zero" | "shuffle" | "random"
 # Valid values: WorldMemoryModeRollout:
 #   - "pred": Prophet-predicted future (main hypothesis)
@@ -31,7 +31,7 @@ class SmolVLAWorldConfig(SmolVLAConfig):
     # ---- World latents / cache ----
     dataset_repo_id: str = "HuggingFaceVLA/libero"
     cache_dir: str = "cache"
-    world_latents_source: str = "vjepa"  # "dino" | "vjepa" | "cosmos"
+    world_latents_source: str = "vjepa"  # "dino" | "vjepa" | "cosmos" | "cogvideo"
     latent_suffix: str = "m4"  # e.g. "m4" when temporal_window=4 was used for precompute
     # NOTE: this must match the cached latents file second dimension.
     # For the default encoder `facebook/vjepa2-vitg-fpc64-256`, embedding dim is 1408.

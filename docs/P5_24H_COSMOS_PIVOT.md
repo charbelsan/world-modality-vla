@@ -213,3 +213,4 @@ Practical note:
 
 - v0 should use the public `nvidia/Cosmos-1.0-Tokenizer-CV8x8x8` JIT encoder
 - do not block the entire day on gated `Cosmos-Predict2.5` access
+- if both NVIDIA tokenizer paths remain gated, fall back immediately to the open `zai-org/CogVideoX-2b` VAE latent branch

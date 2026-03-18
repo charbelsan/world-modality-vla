@@ -495,6 +495,8 @@ def main():
             vision_model = "facebook/vjepa2-vitg-fpc64-256"
         elif world_source == "cosmos":
             vision_model = "cosmos_cv8x8x8_pool4_m4"
+        elif world_source == "cogvideo":
+            vision_model = "cogvideo_2b_pool4_m4"
         else:
             vision_model = "facebook/dinov2-base"
 
@@ -504,7 +506,7 @@ def main():
             else _infer_temporal_window(str(config.get("latent_suffix", "")))
         )
         if world_source == "dino" and temporal_window > 1:
-            raise ValueError("temporal_window>1 is only supported for world_latents_source=vjepa or cosmos")
+            raise ValueError("temporal_window>1 is only supported for world_latents_source=vjepa, cosmos, or cogvideo")
 
         world_encoder = VisionEncoder(
             model_name=vision_model,
