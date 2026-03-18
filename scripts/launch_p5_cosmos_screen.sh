@@ -108,6 +108,7 @@ run_variant() {
   echo "=== ${exp_name} on GPU ${gpu_id} ===" >&2
   if [[ "${DRY_RUN}" == "1" ]]; then
     echo "train -> ${out_dir}" >&2
+    LAST_LAUNCH_PID=""
     return
   fi
   (
@@ -156,7 +157,7 @@ run_variant() {
       "${eval_extra[@]}" \
       2>&1 | tee "${eval_log}"
   ) &
-  echo $!
+  LAST_LAUNCH_PID=$!
 }
 
 if [[ "${DRY_RUN}" == "1" ]]; then
@@ -176,14 +177,22 @@ ensure_cache_exists "${WRIST_SUFFIX}"
 
 declare -a pids
 
-pids+=("$(run_variant "${GPU_ARR[0]}" "C0_front_seed0" "${FRONT_SUFFIX}" "front" 0)")
-pids+=("$(run_variant "${GPU_ARR[1]}" "C0_front_seed1" "${FRONT_SUFFIX}" "front" 1)")
-pids+=("$(run_variant "${GPU_ARR[2]}" "C0_wrist_seed0" "${WRIST_SUFFIX}" "wrist" 0)")
-pids+=("$(run_variant "${GPU_ARR[3]}" "C0_wrist_seed1" "${WRIST_SUFFIX}" "wrist" 1)")
-pids+=("$(run_variant "${GPU_ARR[4]}" "C1_f2_front_seed0" "${FRONT_SUFFIX}" "front" 0 --policy.world_inject_suffix_in=true)")
-pids+=("$(run_variant "${GPU_ARR[5]}" "C1_f2_front_seed1" "${FRONT_SUFFIX}" "front" 1 --policy.world_inject_suffix_in=true)")
-pids+=("$(run_variant "${GPU_ARR[6]}" "C1_f2_wrist_seed0" "${WRIST_SUFFIX}" "wrist" 0 --policy.world_inject_suffix_in=true)")
-pids+=("$(run_variant "${GPU_ARR[7]}" "C1_f2_wrist_seed1" "${WRIST_SUFFIX}" "wrist" 1 --policy.world_inject_suffix_in=true)")
+run_variant "${GPU_ARR[0]}" "C0_front_seed0" "${FRONT_SUFFIX}" "front" 0
+pids+=("${LAST_LAUNCH_PID}")
+run_variant "${GPU_ARR[1]}" "C0_front_seed1" "${FRONT_SUFFIX}" "front" 1
+pids+=("${LAST_LAUNCH_PID}")
+run_variant "${GPU_ARR[2]}" "C0_wrist_seed0" "${WRIST_SUFFIX}" "wrist" 0
+pids+=("${LAST_LAUNCH_PID}")
+run_variant "${GPU_ARR[3]}" "C0_wrist_seed1" "${WRIST_SUFFIX}" "wrist" 1
+pids+=("${LAST_LAUNCH_PID}")
+run_variant "${GPU_ARR[4]}" "C1_f2_front_seed0" "${FRONT_SUFFIX}" "front" 0 --policy.world_inject_suffix_in=true
+pids+=("${LAST_LAUNCH_PID}")
+run_variant "${GPU_ARR[5]}" "C1_f2_front_seed1" "${FRONT_SUFFIX}" "front" 1 --policy.world_inject_suffix_in=true
+pids+=("${LAST_LAUNCH_PID}")
+run_variant "${GPU_ARR[6]}" "C1_f2_wrist_seed0" "${WRIST_SUFFIX}" "wrist" 0 --policy.world_inject_suffix_in=true
+pids+=("${LAST_LAUNCH_PID}")
+run_variant "${GPU_ARR[7]}" "C1_f2_wrist_seed1" "${WRIST_SUFFIX}" "wrist" 1 --policy.world_inject_suffix_in=true
+pids+=("${LAST_LAUNCH_PID}")
 
 fail=0
 for pid in "${pids[@]}"; do

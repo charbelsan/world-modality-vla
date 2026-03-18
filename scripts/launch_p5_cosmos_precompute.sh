@@ -72,6 +72,7 @@ launch_precompute() {
   echo "=== ${tag} on GPU ${gpu_id} ===" >&2
   if [[ "${DRY_RUN}" == "1" ]]; then
     echo "CUDA_VISIBLE_DEVICES=${gpu_id} ${cmd[*]}" >&2
+    LAST_LAUNCH_PID=""
     return
   fi
   (
@@ -80,7 +81,7 @@ launch_precompute() {
     export MKL_NUM_THREADS=1
     "${cmd[@]}"
   ) > "${log_file}" 2>&1 &
-  echo $!
+  LAST_LAUNCH_PID=$!
 }
 
 if [[ "${DRY_RUN}" == "1" ]]; then
@@ -98,12 +99,14 @@ fi
 pids=()
 for ((i=0; i<SHARDS_PER_VIEW; i++)); do
   gpu="${GPU_ARR[$i]}"
-  pids+=("$(launch_precompute "${gpu}" "${i}" "observation.images.image" "${FRONT_SUFFIX}" "front_shard${i}")")
+  launch_precompute "${gpu}" "${i}" "observation.images.image" "${FRONT_SUFFIX}" "front_shard${i}"
+  pids+=("${LAST_LAUNCH_PID}")
 done
 
 for ((i=0; i<SHARDS_PER_VIEW; i++)); do
   gpu="${GPU_ARR[$((i + SHARDS_PER_VIEW))]}"
-  pids+=("$(launch_precompute "${gpu}" "${i}" "observation.images.image2" "${WRIST_SUFFIX}" "wrist_shard${i}")")
+  launch_precompute "${gpu}" "${i}" "observation.images.image2" "${WRIST_SUFFIX}" "wrist_shard${i}"
+  pids+=("${LAST_LAUNCH_PID}")
 done
 
 fail=0
