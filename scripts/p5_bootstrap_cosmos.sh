@@ -111,7 +111,7 @@ fi
 if [[ "${venv_version_ok}" != "1" ]]; then
   rm -rf "${VENV_DIR}"
   uv python install "${PYTHON_VERSION}"
-  uv venv --python "${PYTHON_VERSION}" "${VENV_DIR}"
+  uv venv --python "${PYTHON_VERSION}" --seed "${VENV_DIR}"
 fi
 
 source "${VENV_DIR}/bin/activate"
