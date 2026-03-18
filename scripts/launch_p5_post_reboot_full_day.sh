@@ -31,11 +31,25 @@ N_ACTION_STEPS=${N_ACTION_STEPS:-10}
 
 E0_CKPT=${E0_CKPT:-mi300x_sync/checkpoints/E0_smolvla_baseline_seed0/checkpoints/050000/pretrained_model}
 E2_FRONT_CKPT=${E2_FRONT_CKPT:-mi300x_sync/checkpoints/E2_world_pred_seed0/checkpoints/050000/pretrained_model}
-F2_CKPT=${F2_CKPT:-outputs/train/p5_h100/F2_suffix_in_seed0_bs192_amp_h100/checkpoints/25000/pretrained_model}
 F3B_DIR=${F3B_DIR:-outputs/train/p5_h100/F3b_prefix_cross_seed0_bs192_amp_h100}
-F3B_CKPT=${F3B_CKPT:-${F3B_DIR}/checkpoints/25000/pretrained_model}
 WRIST_DIR=${WRIST_DIR:-outputs/train/p5_h100/E2_wrist_seed0_bs192_amp_h100}
-WRIST_CKPT=${WRIST_CKPT:-${WRIST_DIR}/checkpoints/25000/pretrained_model}
+
+resolve_checkpoint_dir() {
+  local base_dir="$1"
+  local steps="$2"
+  local padded
+  padded="$(printf "%06d" "${steps}")"
+  if [[ -d "${base_dir}/checkpoints/${padded}/pretrained_model" ]]; then
+    echo "${base_dir}/checkpoints/${padded}/pretrained_model"
+  else
+    echo "${base_dir}/checkpoints/${steps}/pretrained_model"
+  fi
+}
+
+F2_BASE=${F2_BASE:-outputs/train/p5_h100/F2_suffix_in_seed0_bs192_amp_h100}
+F2_CKPT=${F2_CKPT:-$(resolve_checkpoint_dir "${F2_BASE}" "${STEPS}")}
+F3B_CKPT=${F3B_CKPT:-$(resolve_checkpoint_dir "${F3B_DIR}" "${STEPS}")}
+WRIST_CKPT=${WRIST_CKPT:-$(resolve_checkpoint_dir "${WRIST_DIR}" "${STEPS}")}
 
 mkdir -p "${ROOT_DIR}/${LOG_DIR}"
 

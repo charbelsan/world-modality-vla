@@ -70,6 +70,18 @@ detect_eval_action_flag() {
   fi
 }
 
+resolve_checkpoint_dir() {
+  local base_dir="$1"
+  local steps="$2"
+  local padded
+  padded="$(printf "%06d" "${steps}")"
+  if [[ -d "${base_dir}/checkpoints/${padded}/pretrained_model" ]]; then
+    echo "${base_dir}/checkpoints/${padded}/pretrained_model"
+  else
+    echo "${base_dir}/checkpoints/${steps}/pretrained_model"
+  fi
+}
+
 run_eval_mode() {
   local ckpt="$1"
   local mode="$2"
@@ -128,7 +140,8 @@ train_world_variant() {
 
 eval_trained_variant() {
   local exp_name="$1"
-  local ckpt="${OUTPUT_ROOT}/${exp_name}/checkpoints/${STEPS}/pretrained_model"
+  local ckpt
+  ckpt="$(resolve_checkpoint_dir "${OUTPUT_ROOT}/${exp_name}" "${STEPS}")"
   run_eval_mode "${ckpt}" pred "${exp_name}_eval"
 }
 

@@ -26,7 +26,21 @@ HF_ROOT=${HF_ROOT:-${ROOT_DIR}/.hf_cache}
 
 E0_CKPT=${E0_CKPT:-mi300x_sync/checkpoints/E0_smolvla_baseline_seed0/checkpoints/050000/pretrained_model}
 E2_FRONT_CKPT=${E2_FRONT_CKPT:-mi300x_sync/checkpoints/E2_world_pred_seed0/checkpoints/050000/pretrained_model}
-E2_WRIST_CKPT=${E2_WRIST_CKPT:-outputs/train/p5_h100/E2_wrist_seed0_bs192_amp_h100/checkpoints/25000/pretrained_model}
+
+resolve_checkpoint_dir() {
+  local base_dir="$1"
+  local steps="$2"
+  local padded
+  padded="$(printf "%06d" "${steps}")"
+  if [[ -d "${base_dir}/checkpoints/${padded}/pretrained_model" ]]; then
+    echo "${base_dir}/checkpoints/${padded}/pretrained_model"
+  else
+    echo "${base_dir}/checkpoints/${steps}/pretrained_model"
+  fi
+}
+
+E2_WRIST_BASE=${E2_WRIST_BASE:-outputs/train/p5_h100/E2_wrist_seed0_bs192_amp_h100}
+E2_WRIST_CKPT=${E2_WRIST_CKPT:-$(resolve_checkpoint_dir "${E2_WRIST_BASE}" 25000)}
 
 mkdir -p "${ROOT_DIR}/${LOG_DIR}"
 

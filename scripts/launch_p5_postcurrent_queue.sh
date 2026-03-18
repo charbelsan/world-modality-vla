@@ -33,8 +33,22 @@ export NUM_WORKERS=${NUM_WORKERS:-48}
 export STEPS=${STEPS:-25000}
 export SEED=${SEED:-0}
 
-F2_CKPT=${F2_CKPT:-outputs/train/p5_h100/F2_suffix_in_seed0_bs192_amp_h100/checkpoints/25000/pretrained_model}
-WRIST_CKPT=${WRIST_CKPT:-outputs/train/p5_h100/E2_wrist_seed0_bs192_amp_h100/checkpoints/25000/pretrained_model}
+resolve_checkpoint_dir() {
+  local base_dir="$1"
+  local steps="$2"
+  local padded
+  padded="$(printf "%06d" "${steps}")"
+  if [[ -d "${base_dir}/checkpoints/${padded}/pretrained_model" ]]; then
+    echo "${base_dir}/checkpoints/${padded}/pretrained_model"
+  else
+    echo "${base_dir}/checkpoints/${steps}/pretrained_model"
+  fi
+}
+
+F2_BASE=${F2_BASE:-outputs/train/p5_h100/F2_suffix_in_seed0_bs192_amp_h100}
+WRIST_BASE=${WRIST_BASE:-outputs/train/p5_h100/E2_wrist_seed0_bs192_amp_h100}
+F2_CKPT=${F2_CKPT:-$(resolve_checkpoint_dir "${F2_BASE}" "${STEPS}")}
+WRIST_CKPT=${WRIST_CKPT:-$(resolve_checkpoint_dir "${WRIST_BASE}" "${STEPS}")}
 
 cd "${ROOT_DIR}"
 source "${VENV_PATH}"
@@ -81,7 +95,8 @@ case "${MODE}" in
         export CUDA_VISIBLE_DEVICES=7 && \
         lerobot-wm-eval --policy.pretrained_path='${F2_CKPT}' --policy.device=cuda --policy.n_action_steps='${EVAL_N_ACTION_STEPS}' --env.type=libero --env.task='${EVAL_TASK}' --eval.n_episodes='${EVAL_EPISODES}' --eval.batch_size='${EVAL_BATCH_SIZE}' 2>&1 | tee logs/F2_suffix_in_seed${SEED}_bs${BATCH_SIZE}_amp_h100_eval.log && \
         lerobot-wm-train --dataset.repo_id=HuggingFaceVLA/libero --policy.type=smolvla_world --policy.device=cuda --policy.push_to_hub=false --batch_size='${BATCH_SIZE}' --num_workers='${NUM_WORKERS}' --steps='${STEPS}' --output_dir=outputs/train/p5_h100/F3b_prefix_cross_seed${SEED}_bs${BATCH_SIZE}_amp_h100 --seed='${SEED}' --wandb.enable=false --policy.use_amp=true --policy.init_from_policy_path=HuggingFaceVLA/smolvla_libero --policy.dataset_repo_id=HuggingFaceVLA/libero --policy.cache_dir=cache --policy.world_latents_source=vjepa --policy.latent_suffix=m4 --policy.world_latent_dim=1408 --policy.context_frames=4 --policy.future_offset=8 --policy.lambda_world=0.2 --policy.world_memory_mode_train=pred --policy.world_camera=front --policy.enable_world_injection=true --policy.world_prefix_cross_attn=true 2>&1 | tee logs/F3b_prefix_cross_seed${SEED}_bs${BATCH_SIZE}_amp_h100.log && \
-        lerobot-wm-eval --policy.pretrained_path=outputs/train/p5_h100/F3b_prefix_cross_seed${SEED}_bs${BATCH_SIZE}_amp_h100/checkpoints/${STEPS}/pretrained_model --policy.device=cuda --policy.n_action_steps='${EVAL_N_ACTION_STEPS}' --env.type=libero --env.task='${EVAL_TASK}' --eval.n_episodes='${EVAL_EPISODES}' --eval.batch_size='${EVAL_BATCH_SIZE}' 2>&1 | tee logs/F3b_prefix_cross_seed${SEED}_bs${BATCH_SIZE}_amp_h100_eval.log"
+        F3B_CKPT=\\$(if [ -d outputs/train/p5_h100/F3b_prefix_cross_seed${SEED}_bs${BATCH_SIZE}_amp_h100/checkpoints/$(printf '%06d' ${STEPS})/pretrained_model ]; then echo outputs/train/p5_h100/F3b_prefix_cross_seed${SEED}_bs${BATCH_SIZE}_amp_h100/checkpoints/$(printf '%06d' ${STEPS})/pretrained_model; else echo outputs/train/p5_h100/F3b_prefix_cross_seed${SEED}_bs${BATCH_SIZE}_amp_h100/checkpoints/${STEPS}/pretrained_model; fi) && \
+        lerobot-wm-eval --policy.pretrained_path=\\${F3B_CKPT} --policy.device=cuda --policy.n_action_steps='${EVAL_N_ACTION_STEPS}' --env.type=libero --env.task='${EVAL_TASK}' --eval.n_episodes='${EVAL_EPISODES}' --eval.batch_size='${EVAL_BATCH_SIZE}' 2>&1 | tee logs/F3b_prefix_cross_seed${SEED}_bs${BATCH_SIZE}_amp_h100_eval.log"
     ;;
   *)
     echo "Usage: MODE=after_gpu6_current|after_gpu7_current $0"
