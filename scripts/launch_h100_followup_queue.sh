@@ -38,6 +38,7 @@ EVAL_TASK=${EVAL_TASK:-"libero_spatial"}
 EVAL_EPISODES=${EVAL_EPISODES:-500}
 EVAL_BATCH_SIZE=${EVAL_BATCH_SIZE:-5}
 EVAL_N_ACTION_STEPS=${EVAL_N_ACTION_STEPS:-10}
+EVAL_POLICY_TYPE=${EVAL_POLICY_TYPE:-}
 
 OUTPUT_ROOT=${OUTPUT_ROOT:-"outputs/train/p5_h100"}
 LOG_DIR=${LOG_DIR:-"logs"}
@@ -79,10 +80,12 @@ run_eval_mode() {
   if [[ -n "${action_flag}" ]]; then
     extra+=("${action_flag}")
   fi
+  if [[ -n "${EVAL_POLICY_TYPE}" ]]; then
+    extra+=("--policy.type=${EVAL_POLICY_TYPE}")
+  fi
   lerobot-wm-eval \
     --policy.path="${ckpt}" \
     --policy.device=cuda \
-    --policy.type=smolvla_world \
     --policy.world_memory_mode_rollout="${mode}" \
     --env.type=libero \
     --env.task="${EVAL_TASK}" \
