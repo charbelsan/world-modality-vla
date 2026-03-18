@@ -115,7 +115,7 @@ if [[ "${venv_version_ok}" != "1" ]]; then
 fi
 
 source "${VENV_DIR}/bin/activate"
-python -m pip install -U pip setuptools wheel
+uv pip install --active -U pip setuptools wheel
 
 export HF_HOME="${HF_CACHE_ROOT}"
 export HUGGINGFACE_HUB_CACHE="${HF_CACHE_ROOT}/hub"
@@ -124,7 +124,7 @@ export TRANSFORMERS_CACHE="${HF_CACHE_ROOT}/transformers"
 export COSMOS_PREDICT2_ROOT="${COSMOS_ROOT}"
 
 if [[ "${INSTALL_TORCH}" == "1" ]]; then
-  python -m pip install \
+  uv pip install --active \
     --index-url "${TORCH_INDEX_URL}" \
     --extra-index-url "https://pypi.org/simple" \
     "torch==${TORCH_VERSION}" \
@@ -132,8 +132,8 @@ if [[ "${INSTALL_TORCH}" == "1" ]]; then
 fi
 
 uv sync --project "${COSMOS_ROOT}" --active --inexact
-python -m pip install bddl cloudpickle draccus easydict gym h5py "imageio[ffmpeg]" libero mujoco==3.3.2
-python -m pip install -e ".[lerobot]"
+uv pip install --active bddl cloudpickle draccus easydict gym h5py "imageio[ffmpeg]" libero mujoco==3.3.2
+uv pip install --active -e ".[lerobot]"
 
 cat > "${ENV_FILE}" <<EOF
 #!/usr/bin/env bash
