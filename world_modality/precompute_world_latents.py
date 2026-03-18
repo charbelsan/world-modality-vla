@@ -309,7 +309,7 @@ def main():
     else:
         resolved_model_name = str(args.vision_model_name)
         if "cosmos" not in resolved_model_name.lower() and "wan2pt1" not in resolved_model_name.lower():
-            resolved_model_name = "cosmos_wan2pt1_pool4_m4"
+            resolved_model_name = "cosmos_cv8x8x8_pool4_m4"
             print(f"[Cosmos] Using default tokenizer encoder: {resolved_model_name}")
         encoder = VisionEncoder(resolved_model_name, device=str(device), dtype="float32")
 

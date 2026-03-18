@@ -21,7 +21,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dataset-name", type=str, default="HuggingFaceVLA/libero")
     parser.add_argument("--front-key", type=str, default="observation.images.image")
     parser.add_argument("--wrist-key", type=str, default="observation.images.image2")
-    parser.add_argument("--vision-model-name", type=str, default="cosmos_wan2pt1_pool4_m4")
+    parser.add_argument("--vision-model-name", type=str, default="cosmos_cv8x8x8_pool4_m4")
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--dtype", type=str, default="float32")
     parser.add_argument("--batch-size", type=int, default=4)

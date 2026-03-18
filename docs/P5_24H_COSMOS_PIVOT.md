@@ -132,7 +132,7 @@ Tasks:
 - recreate the venv
 - clone / pull `phaseC-flow-head`
 - point outputs and caches to `/mnt/preserved`
-- smoke test Cosmos model loading
+- smoke test public Cosmos tokenizer model loading
 - smoke test extraction of one feature tensor from:
   - front view
   - wrist view
@@ -208,3 +208,8 @@ This 24-hour block should be used to answer:
 > "Does replacing JEPA with predictive video features rescue the world-modality idea, while keeping SmolVLA itself fixed?"
 
 That is the highest-value next question.
+
+Practical note:
+
+- v0 should use the public `nvidia/Cosmos-1.0-Tokenizer-CV8x8x8` JIT encoder
+- do not block the entire day on gated `Cosmos-Predict2.5` access

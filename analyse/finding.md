@@ -19,6 +19,7 @@ Rule:
 | 2026-03-17 | Research synthesis from DiT4DiT, DreamZero, Cosmos Policy, DreamDojo, VPP, mimic-video | Strong results consistently use predictive video features and earlier/action-coupled fusion | The thesis survives, but the current JEPA implementation is probably not the right final instantiation | Keep SmolVLA fixed and replace only the world branch with predictive video features |
 | 2026-03-18 | P5 capacity-block data loss | NVMe-only outputs disappeared when the instance expired | Ephemeral storage is unacceptable for checkpoints and analysis artifacts | Write all outputs, logs, caches, and checkpoints to `/mnt/preserved` and sync backups regularly |
 | 2026-03-18 | Current research decision | JEPA + late fusion is no longer the main line | The next high-value question is source quality, not one more JEPA tweak | Prioritize `Cosmos features vs JEPA features` with SmolVLA kept unchanged |
+| 2026-03-18 | Official Cosmos Predict tokenizer path on P5 | Blocked by gated HF repo access (`nvidia/Cosmos-Predict2.5-2B`) during smoke tests | The 24h P5 block cannot depend on gated weights or manual approval loops | Switch v0 Cosmos branch to the public `Cosmos-Tokenizer` JIT encoder (`nvidia/Cosmos-1.0-Tokenizer-CV8x8x8`) and run the source comparison with that |
 
 ## Current Working Thesis
 
@@ -29,4 +30,3 @@ The thesis is now:
 What is no longer assumed:
 
 > A small action-independent Prophet over JEPA latents, injected late into the action head, should reliably improve control.
-

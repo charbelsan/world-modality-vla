@@ -22,7 +22,7 @@ Keep the base SmolVLA perception path unchanged:
 Replace only the current world-memory source:
 
 - **old:** V-JEPA2 pooled latent + Prophet
-- **new:** Cosmos Predict hidden features / tokenizer latents
+- **new:** Cosmos video-tokenizer latents first, then Predict hidden features later if access is available
 
 So the experiment is:
 
@@ -151,11 +151,13 @@ Use this contract first:
 Good first options:
 
 1. **Tokenizer / latent tokens**
-   - better if easy to extract from Cosmos Predict without denoising loops
+   - **v0 path for this repo:** public `nvidia/Cosmos-1.0-Tokenizer-CV8x8x8` JIT encoder
+   - ungated, easy to pool into the current `[B, K, D]` world-memory interface
+   - good first test of "reconstruction-friendly video latents vs JEPA latents"
 
 2. **Intermediate hidden features**
    - closer to DiT4DiT
-   - only if extraction is straightforward and stable
+   - still desirable, but blocked for now if the official Predict checkpoints remain gated
 
 Do **not** start with:
 

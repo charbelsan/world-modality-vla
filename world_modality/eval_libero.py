@@ -494,7 +494,7 @@ def main():
         elif world_source == "vjepa":
             vision_model = "facebook/vjepa2-vitg-fpc64-256"
         elif world_source == "cosmos":
-            vision_model = "cosmos_wan2pt1_pool4_m4"
+            vision_model = "cosmos_cv8x8x8_pool4_m4"
         else:
             vision_model = "facebook/dinov2-base"
 

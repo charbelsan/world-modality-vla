@@ -26,6 +26,7 @@ Conventions:
 - [ ] Add Cosmos smoke-test scripts for front and wrist views
 - [ ] Add an 8-GPU Cosmos precompute + merge launcher
 - [ ] Add an 8-GPU Cosmos screening launcher for the first training/eval matrix
+- [ ] Replace the gated official Cosmos Predict tokenizer dependency with the public `Cosmos-Tokenizer` JIT encoder path
 
 ## Pending
 
@@ -48,6 +49,7 @@ Conventions:
 - [ ] Token-level Cosmos feature injection is blocked until pooled Cosmos features (`C0`) prove that source quality matters at all
 - [ ] DiT4DiT-style intermediate hidden-state extraction is blocked until the simpler tokenizer-latent branch is stable and benchmarked
 - [ ] Full action-conditioned world modeling is blocked until we finish the clean “better source, same policy” comparison
+- [ ] Official Cosmos Predict hidden-feature extraction is blocked on gated Hugging Face weights / approval (`nvidia/Cosmos-Predict2.5-2B`)
 
 ## Deprioritized
 

@@ -6,7 +6,7 @@ set -euo pipefail
 # Goals:
 # - keep the repo on fast local disk if desired
 # - keep caches, logs, outputs, and the venv on /mnt/preserved
-# - install a lean Cosmos Predict tokenizer stack without the full CUDA research extras
+# - install a lean public Cosmos tokenizer stack (no gated Predict weights)
 # - install this repo + LeRobot into the same environment
 #
 # Usage:
@@ -16,15 +16,14 @@ set -euo pipefail
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO_ROOT=${REPO_ROOT:-$(cd "${SCRIPT_DIR}/.." && pwd)}
 PRESERVED_ROOT=${PRESERVED_ROOT:-/mnt/preserved/world-modality-vla}
-VENV_DIR=${VENV_DIR:-${PRESERVED_ROOT}/venvs/world-modality-vla-cosmos}
+VENV_DIR=${VENV_DIR:-${PRESERVED_ROOT}/venvs/world-modality-vla-cosmos312}
 HF_CACHE_ROOT=${HF_CACHE_ROOT:-${PRESERVED_ROOT}/hf_cache}
-COSMOS_ROOT=${COSMOS_ROOT:-${REPO_ROOT}/coc_vla/external/repos/cosmos-predict2.5}
-COSMOS_REPO_URL=${COSMOS_REPO_URL:-https://github.com/nvidia-cosmos/cosmos-predict2.5.git}
-CUDA_EXTRA=${CUDA_EXTRA:-cu128}
+COSMOS_ROOT=${COSMOS_ROOT:-${REPO_ROOT}/coc_vla/external/repos/Cosmos-Tokenizer}
+COSMOS_REPO_URL=${COSMOS_REPO_URL:-https://github.com/NVIDIA/Cosmos-Tokenizer.git}
 INSTALL_SYSTEM_DEPS=${INSTALL_SYSTEM_DEPS:-1}
 INSTALL_TORCH=${INSTALL_TORCH:-1}
-TORCH_VERSION=${TORCH_VERSION:-2.7.0}
-TORCHVISION_VERSION=${TORCHVISION_VERSION:-0.22.0}
+TORCH_VERSION=${TORCH_VERSION:-2.7.1}
+TORCHVISION_VERSION=${TORCHVISION_VERSION:-0.22.1}
 TORCH_INDEX_URL=${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cu128}
 PYTHON_VERSION=${PYTHON_VERSION:-3.12}
 ENV_FILE=${ENV_FILE:-${PRESERVED_ROOT}/p5_cosmos_env.sh}
@@ -80,21 +79,13 @@ link_dir ".hf_cache" "${HF_CACHE_ROOT}"
 
 if [[ "${INSTALL_SYSTEM_DEPS}" == "1" ]]; then
   sudo apt-get update
-  sudo apt-get install -y curl ffmpeg git-lfs libegl1 libosmesa6 libx11-dev mesa-utils python3-venv tree wget
-  git lfs install
+  sudo apt-get install -y curl ffmpeg libegl1 libosmesa6 libx11-dev mesa-utils python3-venv tree wget
 fi
 
 if ! command -v uv >/dev/null 2>&1; then
   curl -LsSf https://astral.sh/uv/install.sh | sh
 fi
 export PATH="${HOME}/.local/bin:${PATH}"
-
-mkdir -p "$(dirname "${COSMOS_ROOT}")"
-if [[ ! -d "${COSMOS_ROOT}/.git" ]]; then
-  git clone "${COSMOS_REPO_URL}" "${COSMOS_ROOT}"
-else
-  git -C "${COSMOS_ROOT}" pull --ff-only
-fi
 
 venv_version_ok=0
 if [[ -x "${VENV_DIR}/bin/python" && -f "${VENV_DIR}/bin/activate" ]]; then
@@ -122,7 +113,7 @@ export HF_HOME="${HF_CACHE_ROOT}"
 export HUGGINGFACE_HUB_CACHE="${HF_CACHE_ROOT}/hub"
 export HF_DATASETS_CACHE="${HF_CACHE_ROOT}/datasets"
 export TRANSFORMERS_CACHE="${HF_CACHE_ROOT}/transformers"
-export COSMOS_PREDICT2_ROOT="${COSMOS_ROOT}"
+export COSMOS_TOKENIZER_CACHE_DIR="${HF_CACHE_ROOT}/cosmos_tokenizer"
 
 if [[ "${INSTALL_TORCH}" == "1" ]]; then
   uv pip install --python "${VENV_DIR}/bin/python" \
@@ -132,9 +123,18 @@ if [[ "${INSTALL_TORCH}" == "1" ]]; then
     "torchvision==${TORCHVISION_VERSION}"
 fi
 
-uv sync --project "${COSMOS_ROOT}" --active --inexact
-uv pip install --python "${VENV_DIR}/bin/python" bddl cloudpickle draccus easydict gym h5py "imageio[ffmpeg]" libero mujoco==3.3.2
-uv pip install --python "${VENV_DIR}/bin/python" -e ".[lerobot]"
+mkdir -p "$(dirname "${COSMOS_ROOT}")"
+if [[ ! -d "${COSMOS_ROOT}/.git" ]]; then
+  git clone --depth 1 "${COSMOS_REPO_URL}" "${COSMOS_ROOT}"
+fi
+
+uv pip install --python "${VENV_DIR}/bin/python" \
+  "transformers==4.51.3" \
+  "huggingface-hub<1.0" \
+  "lerobot==0.4.1" \
+  bddl cloudpickle draccus easydict gym h5py "imageio[ffmpeg]" libero mediapy mujoco==3.3.2
+uv pip install --python "${VENV_DIR}/bin/python" -e "${COSMOS_ROOT}"
+uv pip install --python "${VENV_DIR}/bin/python" -e "${REPO_ROOT}" --no-deps
 
 cat > "${ENV_FILE}" <<EOF
 #!/usr/bin/env bash
@@ -145,7 +145,8 @@ export HF_HOME="${HF_CACHE_ROOT}"
 export HUGGINGFACE_HUB_CACHE="${HF_CACHE_ROOT}/hub"
 export HF_DATASETS_CACHE="${HF_CACHE_ROOT}/datasets"
 export TRANSFORMERS_CACHE="${HF_CACHE_ROOT}/transformers"
-export COSMOS_PREDICT2_ROOT="${COSMOS_ROOT}"
+export COSMOS_TOKENIZER_ROOT="${COSMOS_ROOT}"
+export COSMOS_TOKENIZER_CACHE_DIR="${HF_CACHE_ROOT}/cosmos_tokenizer"
 export MUJOCO_GL="\${MUJOCO_GL:-egl}"
 source "${VENV_DIR}/bin/activate"
 EOF
