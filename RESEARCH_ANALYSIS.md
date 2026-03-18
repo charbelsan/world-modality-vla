@@ -214,6 +214,10 @@ The more plausible bottlenecks are:
 
 ## 9. Comparison with recent video-world-model papers
 
+See also:
+
+- `docs/COSMOS_FEATURE_BRANCH_PLAN.md`
+
 Recent works support the **thesis direction**, but they do **not** support the weakest version of the current implementation.
 
 ### 9.1 What the best-performing methods have in common

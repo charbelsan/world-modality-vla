@@ -188,6 +188,10 @@ At that point, move to Phase B.
 
 This is the video-feature branch inspired by DiT4DiT / mimic-video / VPP style results.
 
+Concrete spec:
+
+- `docs/COSMOS_FEATURE_BRANCH_PLAN.md`
+
 ### B0. Design rule for the next branch
 
 **Do not replace SmolVLA's vision encoder first.**
@@ -221,6 +225,7 @@ This is closer to the original thesis than "replace the visual encoder with a vi
 - do **not** replace the policy backbone
 - extract hidden features from a predictive video model
 - inject them as the world modality into SmolVLA
+- first implementation target: a **parity adapter** that maps Cosmos features into the current world-memory interface so `C0` is a source comparison, not a fusion redesign
 
 Minimal experiment:
 
