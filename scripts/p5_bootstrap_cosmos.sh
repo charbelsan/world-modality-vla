@@ -91,7 +91,8 @@ else
   git -C "${COSMOS_ROOT}" pull --ff-only
 fi
 
-if [[ ! -x "${VENV_DIR}/bin/python" ]]; then
+if [[ ! -x "${VENV_DIR}/bin/python" || ! -f "${VENV_DIR}/bin/activate" ]]; then
+  rm -rf "${VENV_DIR}"
   python3 -m venv "${VENV_DIR}"
 fi
 
