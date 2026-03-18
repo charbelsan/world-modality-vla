@@ -7,7 +7,7 @@ LOG_DIR=${LOG_DIR:-logs}
 
 mkdir -p "${ROOT_DIR}/${LOG_DIR}"
 
-cron_line="@reboot cd ${ROOT_DIR} && ROOT_DIR=${ROOT_DIR} VENV_PATH=${VENV_PATH} nohup ${ROOT_DIR}/scripts/launch_p5_post_reboot_full_day.sh > ${ROOT_DIR}/${LOG_DIR}/p5_post_reboot_full_day.log 2>&1 &"
+cron_line="@reboot cd ${ROOT_DIR} && nohup env ROOT_DIR=${ROOT_DIR} VENV_PATH=${VENV_PATH} bash ${ROOT_DIR}/scripts/launch_p5_post_reboot_full_day.sh > ${ROOT_DIR}/${LOG_DIR}/p5_post_reboot_full_day.log 2>&1 &"
 
 tmp_cron="$(mktemp)"
 crontab -l 2>/dev/null | grep -v 'launch_p5_post_reboot_full_day.sh' > "${tmp_cron}" || true
