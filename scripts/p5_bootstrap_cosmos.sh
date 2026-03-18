@@ -75,7 +75,7 @@ link_dir ".hf_cache" "${HF_CACHE_ROOT}"
 
 if [[ "${INSTALL_SYSTEM_DEPS}" == "1" ]]; then
   sudo apt-get update
-  sudo apt-get install -y curl ffmpeg git-lfs libegl1 libosmesa6 libx11-dev mesa-utils tree wget
+  sudo apt-get install -y curl ffmpeg git-lfs libegl1 libosmesa6 libx11-dev mesa-utils python3-venv tree wget
   git lfs install
 fi
 
