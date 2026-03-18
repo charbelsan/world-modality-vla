@@ -169,6 +169,15 @@ launch_job() {
     return 0
   fi
 
+  if [[ -f "${pid_path}" ]]; then
+    local existing_pid
+    existing_pid="$(cat "${pid_path}")"
+    if [[ "${existing_pid}" =~ ^[0-9]+$ ]] && kill -0 "${existing_pid}" 2>/dev/null; then
+      echo "Skipping ${name}: watcher already running with pid=${existing_pid}"
+      return 0
+    fi
+  fi
+
   (
     prepare_env
     wait_for_gpu_free "${gpu_id}"
