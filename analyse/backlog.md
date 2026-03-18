@@ -18,6 +18,8 @@ Conventions:
 - [x] Add wrist-camera option for online world encoding
 - [x] Define the Cosmos feature branch and the research pivot away from JEPA-first iteration
 - [x] Record the operational lesson that P5 outputs must live on `/mnt/preserved`, not NVMe
+- [x] Implement the ungated `cogvideo` world source as the immediate open video-feature branch
+- [x] Add a P5 day-1 launcher for `cogvideo` precompute + screening
 
 ## In Progress
 
@@ -27,8 +29,8 @@ Conventions:
 - [ ] Add an 8-GPU Cosmos precompute + merge launcher
 - [ ] Add an 8-GPU Cosmos screening launcher for the first training/eval matrix
 - [ ] Replace the gated official Cosmos Predict tokenizer dependency with the public `Cosmos-Tokenizer` JIT encoder path
-- [ ] Implement the ungated `cogvideo` world source as the immediate open video-feature branch
-- [ ] Add a P5 day-1 launcher for `cogvideo` precompute + screening
+- [ ] Finish the 8-GPU `cogvideo` shard precompute and merge on the P5
+- [ ] Run the first `G0/G1` CogVideoX screening matrix after precompute completes
 
 ## Pending
 

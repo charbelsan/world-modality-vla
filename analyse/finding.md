@@ -21,6 +21,7 @@ Rule:
 | 2026-03-18 | Current research decision | JEPA + late fusion is no longer the main line | The next high-value question is source quality, not one more JEPA tweak | Prioritize `Cosmos features vs JEPA features` with SmolVLA kept unchanged |
 | 2026-03-18 | Official Cosmos Predict tokenizer path on P5 | Blocked by gated HF repo access (`nvidia/Cosmos-Predict2.5-2B`) during smoke tests | The 24h P5 block cannot depend on gated weights or manual approval loops | Switch v0 Cosmos branch to the public `Cosmos-Tokenizer` JIT encoder (`nvidia/Cosmos-1.0-Tokenizer-CV8x8x8`) and run the source comparison with that |
 | 2026-03-18 | Public Cosmos tokenizer fallback | Also gated on HF for this machine/account (`nvidia/Cosmos-1.0-Tokenizer-CV8x8x8`) | We need a truly open video-latent source to exploit the P5 immediately | Use open CogVideoX VAE latents as the first ungated video-feature branch while keeping the same SmolVLA world-memory interface |
+| 2026-03-18 | CogVideoX VAE branch (`cogvideo_2b_pool4_m4`) smoke + 8-way shard launch | Front/wrist smoke passed with clean `256`-d pooled features; precompute is writing shard caches on all 8 H100s after reducing precompute batch to `8` | The open video-latent branch is viable on the current P5, but VAE precompute is much heavier than JEPA and needs conservative batch sizing | Let the 8-GPU precompute finish, then run the first `G0/G1` screening matrix before spending more time on gated Cosmos access |
 
 ## Current Working Thesis
 
