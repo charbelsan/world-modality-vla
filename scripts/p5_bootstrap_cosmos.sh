@@ -29,8 +29,23 @@ if [[ ! -f "${REPO_ROOT}/pyproject.toml" ]]; then
   exit 2
 fi
 
-mkdir -p "${PRESERVED_ROOT}/"{outputs,cache,logs,eval_libero_results,artifacts,venvs}
-mkdir -p "${HF_CACHE_ROOT}"
+ensure_dir_writable() {
+  local path="$1"
+  if mkdir -p "${path}" 2>/dev/null; then
+    return
+  fi
+  sudo mkdir -p "${path}"
+  sudo chown -R "$(id -u):$(id -g)" "${path}"
+}
+
+ensure_dir_writable "${PRESERVED_ROOT}"
+ensure_dir_writable "${PRESERVED_ROOT}/outputs"
+ensure_dir_writable "${PRESERVED_ROOT}/cache"
+ensure_dir_writable "${PRESERVED_ROOT}/logs"
+ensure_dir_writable "${PRESERVED_ROOT}/eval_libero_results"
+ensure_dir_writable "${PRESERVED_ROOT}/artifacts"
+ensure_dir_writable "${PRESERVED_ROOT}/venvs"
+ensure_dir_writable "${HF_CACHE_ROOT}"
 
 link_dir() {
   local local_name="$1"
