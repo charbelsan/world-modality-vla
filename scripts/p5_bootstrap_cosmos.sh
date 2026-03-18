@@ -6,7 +6,7 @@ set -euo pipefail
 # Goals:
 # - keep the repo on fast local disk if desired
 # - keep caches, logs, outputs, and the venv on /mnt/preserved
-# - install the Cosmos Predict package with its CUDA extra
+# - install a lean Cosmos Predict tokenizer stack without the full CUDA research extras
 # - install this repo + LeRobot into the same environment
 #
 # Usage:
@@ -22,6 +22,10 @@ COSMOS_ROOT=${COSMOS_ROOT:-${REPO_ROOT}/coc_vla/external/repos/cosmos-predict2.5
 COSMOS_REPO_URL=${COSMOS_REPO_URL:-https://github.com/nvidia-cosmos/cosmos-predict2.5.git}
 CUDA_EXTRA=${CUDA_EXTRA:-cu128}
 INSTALL_SYSTEM_DEPS=${INSTALL_SYSTEM_DEPS:-1}
+INSTALL_TORCH=${INSTALL_TORCH:-1}
+TORCH_VERSION=${TORCH_VERSION:-2.7.0}
+TORCHVISION_VERSION=${TORCHVISION_VERSION:-0.22.0}
+TORCH_INDEX_URL=${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cu128}
 ENV_FILE=${ENV_FILE:-${PRESERVED_ROOT}/p5_cosmos_env.sh}
 
 if [[ ! -f "${REPO_ROOT}/pyproject.toml" ]]; then
@@ -105,7 +109,16 @@ export HF_DATASETS_CACHE="${HF_CACHE_ROOT}/datasets"
 export TRANSFORMERS_CACHE="${HF_CACHE_ROOT}/transformers"
 export COSMOS_PREDICT2_ROOT="${COSMOS_ROOT}"
 
-uv sync --project "${COSMOS_ROOT}" --group libero --extra="${CUDA_EXTRA}" --active --inexact
+if [[ "${INSTALL_TORCH}" == "1" ]]; then
+  python -m pip install \
+    --index-url "${TORCH_INDEX_URL}" \
+    --extra-index-url "https://pypi.org/simple" \
+    "torch==${TORCH_VERSION}" \
+    "torchvision==${TORCHVISION_VERSION}"
+fi
+
+uv sync --project "${COSMOS_ROOT}" --active --inexact
+python -m pip install bddl cloudpickle draccus easydict gym h5py "imageio[ffmpeg]" libero mujoco==3.3.2
 python -m pip install -e ".[lerobot]"
 
 cat > "${ENV_FILE}" <<EOF
