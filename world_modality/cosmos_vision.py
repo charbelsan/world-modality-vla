@@ -55,6 +55,7 @@ class CosmosLatentEncoder(torch.nn.Module):
         self.temporal_window = self._parse_temporal_window(model_name)
         cosmos_root = ensure_cosmos_importable()
         try:
+            from cosmos_oss.checkpoints import register_checkpoints
             from cosmos_predict2._src.predict2.tokenizers.wan2pt1 import Wan2pt1VAEInterface
         except Exception as e:  # pragma: no cover
             raise RuntimeError(
@@ -62,6 +63,10 @@ class CosmosLatentEncoder(torch.nn.Module):
                 "installed with its CUDA extra, e.g. `uv sync --project "
                 f"{cosmos_root} --extra=cu128 --active --inexact`."
             ) from e
+
+        # External Cosmos builds need explicit checkpoint registration so the public HF-backed
+        # mapping is available for tokenizer weights referenced by the legacy s3:// URI.
+        register_checkpoints()
 
         self.tokenizer = Wan2pt1VAEInterface(temporal_window=self.temporal_window, load_mean_std=False)
         self.tokenizer_dtype = torch.float32
