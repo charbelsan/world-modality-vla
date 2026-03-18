@@ -33,9 +33,13 @@ def parse_args() -> argparse.Namespace:
 
 def to_chw_uint8(step_value) -> torch.Tensor:
     arr = np.asarray(step_value)
-    if arr.ndim != 3 or arr.shape[-1] != 3:
-        raise ValueError(f"Expected HWC image with 3 channels, got shape={arr.shape}")
-    return torch.from_numpy(arr).permute(2, 0, 1).contiguous()
+    if arr.ndim != 3:
+        raise ValueError(f"Expected image tensor with 3 dims, got shape={arr.shape}")
+    if arr.shape[-1] == 3:
+        return torch.from_numpy(arr).permute(2, 0, 1).contiguous()
+    if arr.shape[0] == 3:
+        return torch.from_numpy(arr).contiguous()
+    raise ValueError(f"Expected HWC or CHW image with 3 channels, got shape={arr.shape}")
 
 
 def build_batch(ds, *, image_key: str, start_index: int, batch_size: int) -> torch.Tensor:
